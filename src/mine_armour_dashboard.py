@@ -639,6 +639,27 @@ class SensorDataManager:
                     'alt': 0.0,
                     'sat': 0
                 }
+            },
+            'rfid_checkpoints': {
+                'timestamps': deque(maxlen=max_points),
+                'uid_scans': deque(maxlen=max_points),
+                'latest_tag': None,
+                'latest_station': None,
+                'checkpoint_progress': {},  # Maps node_id -> {checkpoint_id: passed_timestamp}
+                'active_checkpoints': {
+                    # Zone A checkpoints
+                    '1298': ['Entry Gate', 'Safety Check', 'Equipment Bay', 'Deep Section'],
+                    '1753': ['Main Tunnel', 'Gas Monitor', 'Emergency Exit'],
+                    '1456': ['Shaft Entry', 'Mining Face', 'Ventilation Hub'],
+                    # Zone B checkpoints
+                    '2001': ['North Entry', 'Equipment Room', 'Gas Detection', 'Exit Portal'],
+                    '2055': ['Central Hub', 'Safety Station', 'Mining Zone'],
+                    '2089': ['Secondary Tunnel', 'Emergency Bay', 'Final Check'],
+                    # Zone C checkpoints
+                    '3012': ['South Gate', 'Tool Center', 'Deep Shaft', 'Return Path'],
+                    '3067': ['Control Point', 'Ventilation Room', 'Safety Exit'],
+                    '3134': ['Access Tunnel', 'Equipment Bay', 'Emergency Station']
+                }
             }
         }
         self.lock = threading.Lock()
@@ -744,6 +765,94 @@ class SensorDataManager:
         """Get GPS data for mapping"""
         with self.lock:
             return self.data['gps_data'].copy()
+    
+    def add_rfid_data(self, rfid_data):
+        """Add new RFID checkpoint data"""
+        with self.lock:
+            timestamp = datetime.now()
+            
+            # Extract data from new RFID format: {"station_id": "A1", "tag_id": "TAG123"}
+            station_id = rfid_data.get('station_id', '')
+            tag_id = rfid_data.get('tag_id', '')
+            
+            # Map station_id to node_id and checkpoint (you can customize this mapping)
+            # Station format examples: A1, A2, B1, B2, etc.
+            zone = station_id[0] if station_id else ''  # Extract zone letter (A, B, C)
+            station_num = station_id[1:] if len(station_id) > 1 else '1'  # Extract station number
+            
+            # Map zones to node IDs
+            zone_nodes = {
+                'A': ['1298', '1753', '1456'],
+                'B': ['2001', '2055', '2089'], 
+                'C': ['3012', '3067', '3134']
+            }
+            
+            # Get node_id based on zone and station number
+            if zone in zone_nodes:
+                nodes = zone_nodes[zone]
+                node_idx = (int(station_num) - 1) % len(nodes)
+                node_id = nodes[node_idx]
+            else:
+                node_id = station_id  # Fallback to station_id if no mapping
+            
+            # Map station to checkpoint names
+            checkpoint_mapping = {
+                'A1': 'Entry Gate',
+                'A2': 'Safety Check', 
+                'A3': 'Equipment Bay',
+                'A4': 'Deep Section',
+                'B1': 'North Entry',
+                'B2': 'Equipment Room',
+                'B3': 'Gas Detection', 
+                'B4': 'Exit Portal',
+                'C1': 'South Gate',
+                'C2': 'Tool Center',
+                'C3': 'Deep Shaft',
+                'C4': 'Return Path'
+            }
+            checkpoint_id = checkpoint_mapping.get(station_id, f'Station {station_id}')
+            
+            # Store the scan
+            self.data['rfid_checkpoints']['timestamps'].append(timestamp)
+            self.data['rfid_checkpoints']['uid_scans'].append({
+                'tag_id': tag_id,
+                'station_id': station_id,
+                'node_id': node_id,
+                'checkpoint': checkpoint_id,
+                'timestamp': timestamp
+            })
+            
+            self.data['rfid_checkpoints']['latest_tag'] = tag_id
+            self.data['rfid_checkpoints']['latest_station'] = station_id
+            
+            # Update checkpoint progress for specific nodes
+            if node_id and checkpoint_id:
+                if node_id not in self.data['rfid_checkpoints']['checkpoint_progress']:
+                    self.data['rfid_checkpoints']['checkpoint_progress'][node_id] = {}
+                
+                self.data['rfid_checkpoints']['checkpoint_progress'][node_id][checkpoint_id] = timestamp
+            
+            logging.info(f"RFID checkpoint updated: Station={station_id}, Tag={tag_id}, Node={node_id}, Checkpoint={checkpoint_id}")
+    
+    def get_rfid_data(self):
+        """Get RFID checkpoint data"""
+        with self.lock:
+            return self.data['rfid_checkpoints'].copy()
+    
+    def get_checkpoint_status(self, node_id):
+        """Get checkpoint status for a specific node"""
+        with self.lock:
+            checkpoints = self.data['rfid_checkpoints']['active_checkpoints'].get(node_id, [])
+            progress = self.data['rfid_checkpoints']['checkpoint_progress'].get(node_id, {})
+            
+            # Return list of (checkpoint_name, is_passed, timestamp)
+            status = []
+            for checkpoint in checkpoints:
+                is_passed = checkpoint in progress
+                timestamp = progress.get(checkpoint) if is_passed else None
+                status.append((checkpoint, is_passed, timestamp))
+            
+            return status
 
 class MQTTClient:
     """MQTT client for receiving gas sensor data"""
@@ -759,8 +868,9 @@ class MQTTClient:
         self.mqtt_username = os.getenv("MQTT_USERNAME")
         self.mqtt_password = os.getenv("MQTT_PASSWORD")
         
-        # Gas sensor topic
+        # MQTT Topics
         self.gas_topic = "LOKI_2004"
+        self.rfid_topic = "LOKI_2004"  # RFID checkpoint topic
     
     def on_connect(self, client, userdata, flags, rc):
         if rc == 0:
@@ -769,6 +879,9 @@ class MQTTClient:
             # Subscribe to gas sensor topic
             client.subscribe(self.gas_topic)
             logging.info(f"Subscribed to {self.gas_topic}")
+            # Subscribe to RFID checkpoint topic
+            client.subscribe(self.rfid_topic)
+            logging.info(f"Subscribed to {self.rfid_topic}")
         else:
             logging.error(f"Failed to connect to MQTT broker: {rc}")
     
@@ -782,6 +895,12 @@ class MQTTClient:
                 data = json.loads(payload)
                 self.data_manager.add_gas_data(data)
                 logging.info(f"Received gas data: {data}")
+                
+            elif topic == self.rfid_topic:
+                # Parse RFID checkpoint data
+                data = json.loads(payload)
+                self.data_manager.add_rfid_data(data)
+                logging.info(f"Received RFID data: {data}")
             
         except Exception as e:
             logging.error(f"Error processing message: {e}")
@@ -928,6 +1047,12 @@ app.index_string = '''
             .metric-value {font-size:1.9rem; line-height:1.1; font-weight:700; letter-spacing:.5px;}
             @media (max-width:1400px){ .metric-value {font-size:1.6rem;} }
             @media (max-width:1200px){ .metric-value {font-size:1.4rem;} }
+            /* RFID Checkpoint Animation */
+            @keyframes pulse {
+                0% { box-shadow: 0 0 15px rgba(0, 255, 136, 0.5); }
+                50% { box-shadow: 0 0 25px rgba(0, 255, 136, 0.8), 0 0 35px rgba(0, 255, 136, 0.3); }
+                100% { box-shadow: 0 0 15px rgba(0, 255, 136, 0.5); }
+            }
         </style>
     </head>
     <body>
@@ -945,6 +1070,7 @@ app.index_string = '''
 app.layout = html.Div([
     dcc.Location(id='url', refresh=False),
     dcc.Store(id='chosen-zone-store'),
+    dcc.Store(id='selected-node-store', storage_type='session'),
     dcc.Store(id='auth-store', storage_type='session'),
     html.Div(id='page-content')
 ])
@@ -974,6 +1100,84 @@ def zone_select_layout():
                 html.Button("TRACK", id='go-to-vitals-btn', n_clicks=0, className='landing-btn'),
                 html.Div(id='zone-select-msg', className='landing-subtext')
             ], className='landing-card')
+        ], className='landing-wrapper')
+    ])
+
+# ---------------------------
+# Page: Nodes Selection 
+# ---------------------------
+def nodes_layout(zone_name):
+    # Get nodes for the selected zone
+    zone_nodes = {
+        'ZONE_A': [
+            {'id': '1298', 'name': 'Node 1298', 'status': 'Active'},
+            {'id': '1753', 'name': 'Node 1753', 'status': 'Active'},
+            {'id': '1456', 'name': 'Node 1456', 'status': 'Active'}
+        ],
+        'ZONE_B': [
+            {'id': '2001', 'name': 'Node 2001', 'status': 'Active'},
+            {'id': '2055', 'name': 'Node 2055', 'status': 'Active'},
+            {'id': '2089', 'name': 'Node 2089', 'status': 'Active'}
+        ],
+        'ZONE_C': [
+            {'id': '3012', 'name': 'Node 3012', 'status': 'Active'},
+            {'id': '3067', 'name': 'Node 3067', 'status': 'Active'},
+            {'id': '3134', 'name': 'Node 3134', 'status': 'Active'}
+        ]
+    }
+    
+    nodes = zone_nodes.get(zone_name, [])
+    
+    # Create node cards
+    node_cards = []
+    for node in nodes:
+        card = dbc.Card([
+            dbc.CardBody([
+                html.H4(node['name'], className='card-title', style={'color': '#ff4444', 'marginBottom': '8px'}),
+                html.P(f"Node ID: {node['id']}", style={'color': '#cccccc', 'marginBottom': '4px'}),
+                html.P(f"Status: {node['status']}", style={'color': '#00ff88', 'marginBottom': '12px'}),
+                html.Button(
+                    "SELECT NODE",
+                    id={'type': 'node-select-btn', 'index': node['id']},
+                    n_clicks=0,
+                    className='btn btn-danger',
+                    style={
+                        'background': 'linear-gradient(45deg, #cc0000, #ff4444)',
+                        'border': 'none',
+                        'color': 'white',
+                        'fontWeight': 'bold',
+                        'width': '100%',
+                        'padding': '8px'
+                    }
+                )
+            ])
+        ], style={
+            'background': 'linear-gradient(135deg, #1a0000, #330000)',
+            'border': '1px solid #660000',
+            'marginBottom': '15px',
+            'boxShadow': '0 4px 8px rgba(255,68,68,0.2)'
+        })
+        node_cards.append(card)
+    
+    return html.Div([
+        html.Div([
+            html.Div([
+                html.H1("MINE ARMOUR", className='landing-title'),
+                html.Div(f"Select Node in {zone_name.replace('_', ' ')}", 
+                        className='landing-subtext', 
+                        style={'fontSize':'0.95rem','marginTop':'-18px','marginBottom':'20px','letterSpacing':'.8px','color':'#ffcccc','fontWeight':'600'}),
+                
+                html.Div(node_cards, style={'maxHeight': '400px', 'overflowY': 'auto', 'padding': '10px'}),
+                
+                html.Div([
+                    html.Button("← BACK TO ZONES", 
+                               id='back-to-zones-btn', 
+                               n_clicks=0, 
+                               className='landing-btn',
+                               style={'marginTop': '15px', 'background': 'linear-gradient(45deg, #666666, #999999)'})
+                ], style={'textAlign': 'center'})
+                
+            ], className='landing-card', style={'maxWidth': '600px'})
         ], className='landing-wrapper')
     ])
 
@@ -1201,6 +1405,51 @@ def vitals_layout():
         ], width=2)
     ], className="mb-4"),
     
+    # RFID Checkpoint Status Section
+    dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader([
+                    html.H4([
+                        html.I(className="fas fa-id-card me-2", style={'color': '#ff6b6b'}),
+                        "RFID Checkpoint Status"
+                    ], style={'color': '#ffffff', 'margin': '0'})
+                ], style={'background': 'linear-gradient(45deg, #660000, #990000)', 'border': 'none'}),
+                dbc.CardBody([
+                    html.Div([
+                        html.Div([
+                            html.P("Selected Node:", style={'color': '#cccccc', 'marginBottom': '5px', 'fontSize': '0.9rem'}),
+                            html.H5(id="selected-node-display", children="No node selected", 
+                                   style={'color': '#ffffff', 'marginBottom': '15px'})
+                        ]),
+                        html.Div([
+                            html.P("Latest RFID Scan:", style={'color': '#cccccc', 'marginBottom': '5px', 'fontSize': '0.9rem'}),
+                            html.H6(id="latest-rfid-scan", children="No scans yet", 
+                                   style={'color': '#ffcccc', 'marginBottom': '15px'})
+                        ]),
+                        html.Hr(style={'borderColor': '#660000', 'margin': '15px 0'}),
+                        html.Div([
+                            html.H6("Checkpoint Flow Diagram:", style={'color': '#ffffff', 'marginBottom': '15px', 'textAlign': 'center'}),
+                            html.Div(id="checkpoint-flow-diagram", children=[
+                                html.P("Select a node to view checkpoint flow", 
+                                      style={'color': '#999999', 'fontStyle': 'italic', 'textAlign': 'center'})
+                            ], style={
+                                'minHeight': '120px',
+                                'display': 'flex',
+                                'alignItems': 'center',
+                                'justifyContent': 'center',
+                                'background': 'linear-gradient(135deg, #0d0000, #1a0000)',
+                                'border': '1px solid #440000',
+                                'borderRadius': '8px',
+                                'padding': '15px'
+                            })
+                        ])
+                    ])
+                ], style={'background': 'linear-gradient(135deg, #1a0000, #330000)', 'color': '#ffffff'})
+            ], style={'border': '1px solid #660000', 'boxShadow': '0 4px 8px rgba(255,107,107,0.2)'})
+        ], width=12)
+    ], className="mb-4"),
+    
     # GPS and Additional Sensors Section Header
     dbc.Row([
         dbc.Col([
@@ -1418,6 +1667,13 @@ def display_page(pathname, zone_data, auth_data):
     # Not authenticated -> always show login
     if not auth_data:
         return login_layout()
+    if pathname == '/nodes':
+        # Show nodes page for the selected zone
+        if zone_data and 'zone' in zone_data:
+            return nodes_layout(zone_data['zone'])
+        else:
+            # No zone selected, go back to zone selection
+            return zone_select_layout()
     if pathname == '/vitals':
         return vitals_layout()
     # default root -> zone selection
@@ -1429,10 +1685,10 @@ def display_page(pathname, zone_data, auth_data):
     State('zone-select-only','value'),
     prevent_initial_call=True
 )
-def go_to_vitals(n, zone_value):
+def go_to_nodes(n, zone_value):
     if not zone_value:
         return dash.no_update, 'Please choose a zone.', dash.no_update
-    return {'zone': zone_value}, '', '/vitals'
+    return {'zone': zone_value}, '', '/nodes'
 
 # ---------------------------
 # Login callback
@@ -2063,7 +2319,191 @@ def update_gsr_chart(n):
     )
     return fig
 
-# Zone/node callbacks removed - now handled on separate zone selection page
+# ---------------------------
+# Navigation Callbacks for Multi-page Flow
+# ---------------------------
+
+# Node selection callback (from nodes page to vitals)
+@app.callback(
+    [Output('selected-node-store','data'), Output('url','pathname', allow_duplicate=True)],
+    Input({'type': 'node-select-btn', 'index': ALL}, 'n_clicks'),
+    prevent_initial_call=True
+)
+def select_node(n_clicks_list):
+    if not any(n_clicks_list) or not callback_context.triggered:
+        return dash.no_update, dash.no_update
+    
+    # Get the node ID that was clicked
+    button_id = callback_context.triggered[0]['prop_id']
+    node_id = eval(button_id.split('.')[0])['index']  # Extract node ID
+    
+    return {'node': node_id}, '/vitals'
+
+# Back to zones callback (from nodes page)
+@app.callback(
+    Output('url','pathname', allow_duplicate=True),
+    Input('back-to-zones-btn','n_clicks'),
+    prevent_initial_call=True
+)
+def back_to_zones(n_clicks):
+    if n_clicks and n_clicks > 0:
+        return '/'
+    return dash.no_update
+
+# Update selected node display in RFID section
+@app.callback(
+    Output('selected-node-display','children'),
+    Input('selected-node-store','data'),
+    prevent_initial_call=True
+)
+def update_selected_node_display(node_data):
+    if node_data and 'node' in node_data:
+        return f"Node {node_data['node']}"
+    return "No node selected"
+
+# Update RFID checkpoint progress display
+@app.callback(
+    [Output('checkpoint-flow-diagram','children'), Output('latest-rfid-scan','children')],
+    [Input('interval-component','n_intervals'), Input('selected-node-store','data')],
+    prevent_initial_call=True
+)
+def update_rfid_checkpoint_display(n, node_data):
+    try:
+        if not node_data or 'node' not in node_data:
+            return [html.P("Select a node to view checkpoint flow", 
+                          style={'color': '#999999', 'fontStyle': 'italic', 'textAlign': 'center'})], "No scans yet"
+        
+        selected_node = node_data['node']
+        
+        # Get RFID data from data manager
+        rfid_data = data_manager.get_rfid_data()
+        
+        # Show latest tag scan with station info
+        latest_tag = rfid_data.get('latest_tag', 'None')
+        latest_station = rfid_data.get('latest_station', 'None')
+        
+        if latest_tag != 'None' and latest_station != 'None':
+            latest_scan_text = f"Station: {latest_station} | Tag: {latest_tag}"
+        else:
+            latest_scan_text = "No scans yet"
+        
+        # Get checkpoint status for the selected node
+        checkpoint_status = data_manager.get_checkpoint_status(selected_node)
+        
+        if not checkpoint_status:
+            return [html.P(f"No checkpoints configured for Node {selected_node}", 
+                          style={'color': '#cccccc', 'textAlign': 'center'})], latest_scan_text
+        
+        # Create visual flow diagram
+        flow_elements = []
+        
+        for i, (checkpoint_name, is_passed, timestamp) in enumerate(checkpoint_status):
+            # Checkpoint circle
+            if is_passed:
+                circle_style = {
+                    'width': '60px',
+                    'height': '60px',
+                    'borderRadius': '50%',
+                    'background': 'linear-gradient(45deg, #28a745, #00ff88)',
+                    'border': '3px solid #00ff88',
+                    'display': 'flex',
+                    'alignItems': 'center',
+                    'justifyContent': 'center',
+                    'boxShadow': '0 0 15px rgba(0, 255, 136, 0.5)',
+                    'position': 'relative',
+                    'animation': 'pulse 2s infinite'
+                }
+                icon = html.I(className="fas fa-check", style={'color': 'white', 'fontSize': '20px'})
+                status_info = html.Div([
+                    html.Small("PASSED", style={'color': '#00ff88', 'fontWeight': 'bold', 'fontSize': '9px'}),
+                    html.Br(),
+                    html.Small(timestamp.strftime('%H:%M:%S') if timestamp else "", 
+                              style={'color': '#cccccc', 'fontSize': '8px'})
+                ], style={'position': 'absolute', 'top': '70px', 'textAlign': 'center', 'whiteSpace': 'nowrap', 'width': '80px'})
+            else:
+                circle_style = {
+                    'width': '60px',
+                    'height': '60px',
+                    'borderRadius': '50%',
+                    'background': 'linear-gradient(45deg, #dc3545, #ff4444)',
+                    'border': '3px solid #ff4444',
+                    'display': 'flex',
+                    'alignItems': 'center',
+                    'justifyContent': 'center',
+                    'boxShadow': '0 0 10px rgba(255, 68, 68, 0.3)',
+                    'position': 'relative',
+                    'opacity': '0.7'
+                }
+                icon = html.I(className="fas fa-times", style={'color': 'white', 'fontSize': '20px'})
+                status_info = html.Div([
+                    html.Small("PENDING", style={'color': '#ff4444', 'fontWeight': 'bold', 'fontSize': '9px'}),
+                    html.Br(),
+                    html.Small("Waiting...", style={'color': '#cccccc', 'fontSize': '8px'})
+                ], style={'position': 'absolute', 'top': '70px', 'textAlign': 'center', 'whiteSpace': 'nowrap', 'width': '80px'})
+            
+            # Checkpoint container
+            checkpoint_container = html.Div([
+                html.Div([
+                    icon,
+                    status_info
+                ], style=circle_style),
+                html.Div(checkpoint_name, style={
+                    'color': '#ffffff',
+                    'fontSize': '11px',
+                    'textAlign': 'center',
+                    'marginTop': '35px',
+                    'fontWeight': 'bold',
+                    'maxWidth': '90px',
+                    'lineHeight': '1.2',
+                    'overflow': 'hidden'
+                })
+            ], style={'display': 'inline-block', 'margin': '0 15px', 'textAlign': 'center', 'verticalAlign': 'top'})
+            
+            flow_elements.append(checkpoint_container)
+            
+            # Add arrow between checkpoints (except after the last one)
+            if i < len(checkpoint_status) - 1:
+                if is_passed and checkpoint_status[i + 1][1]:  # Both current and next are passed
+                    arrow_color = '#00ff88'
+                    arrow_glow = '0 0 10px rgba(0, 255, 136, 0.7)'
+                elif is_passed:  # Only current is passed
+                    arrow_color = '#ffaa00'
+                    arrow_glow = '0 0 8px rgba(255, 170, 0, 0.5)'
+                else:  # Current not passed
+                    arrow_color = '#666666'
+                    arrow_glow = 'none'
+                
+                arrow = html.Div([
+                    html.I(className="fas fa-arrow-right", style={
+                        'color': arrow_color,
+                        'fontSize': '18px',
+                        'boxShadow': arrow_glow,
+                        'textShadow': arrow_glow
+                    })
+                ], style={
+                    'display': 'inline-block',
+                    'margin': '0 8px',
+                    'paddingTop': '25px',
+                    'verticalAlign': 'top'
+                })
+                flow_elements.append(arrow)
+        
+        # Create the flow diagram
+        flow_diagram = html.Div(flow_elements, style={
+            'display': 'flex',
+            'alignItems': 'flex-start',
+            'justifyContent': 'center',
+            'flexWrap': 'nowrap',
+            'padding': '15px 10px',
+            'minHeight': '140px',
+            'overflowX': 'auto'
+        })
+        
+        return [flow_diagram], latest_scan_text
+    
+    except Exception as e:
+        return [html.P(f"Error loading checkpoint data: {str(e)}", 
+                      style={'color': '#ff4444', 'textAlign': 'center'})], "Error"
 
 
 if __name__ == '__main__':
