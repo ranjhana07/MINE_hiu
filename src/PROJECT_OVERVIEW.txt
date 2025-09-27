@@ -1,0 +1,32 @@
+🛡️ MINE ARMOUR - CLEAN PROJECT STRUCTURE
+=============================================
+
+📁 Project Files (Essential Only):
+├── 🔧 .env                        → MQTT configuration
+├── 📊 mine_armour_dashboard.py    → Main dashboard application 
+├── 🖥️ server.py                   → Gas sensor data server
+├── 🚀 start_dashboard.py          → Dashboard launcher script
+├── 📦 requirements.txt            → Python dependencies
+└── 📖 README_Dashboard.md         → Project documentation
+
+🎯 FEATURES:
+✅ Real-time gas sensor monitoring (LPG, CH4, Propane, Butane, H2)
+✅ Professional dark theme dashboard
+✅ MQTT integration with LOKI_2004 topic
+✅ Live charts with gradient fills
+✅ Connection status monitoring
+✅ Responsive design
+
+🚀 QUICK START:
+1. python start_dashboard.py
+2. Open http://localhost:8050
+3. Monitor real-time gas sensor data!
+
+🔥 ALL UNWANTED FILES REMOVED:
+❌ Simulation files
+❌ Old tracking code  
+❌ Test files
+❌ Unused libraries
+❌ Cache files
+
+✨ CLEAN & OPTIMIZED FOR PRODUCTION!
