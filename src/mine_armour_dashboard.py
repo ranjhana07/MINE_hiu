@@ -870,7 +870,7 @@ class MQTTClient:
         
         # MQTT Topics
         self.gas_topic = "LOKI_2004"
-        self.rfid_topic = "LOKI_2004"  # RFID checkpoint topic
+        self.rfid_topic = "rfid"  # RFID checkpoint topic
     
     def on_connect(self, client, userdata, flags, rc):
         if rc == 0:
@@ -1052,6 +1052,12 @@ app.index_string = '''
                 0% { box-shadow: 0 0 15px rgba(0, 255, 136, 0.5); }
                 50% { box-shadow: 0 0 25px rgba(0, 255, 136, 0.8), 0 0 35px rgba(0, 255, 136, 0.3); }
                 100% { box-shadow: 0 0 15px rgba(0, 255, 136, 0.5); }
+            }
+            /* New blinking highlight for first Main Tunnel checkpoint */
+            @keyframes blink {
+                0% { transform: scale(1); box-shadow: 0 0 8px 2px rgba(255,255,0,0.35); }
+                50% { transform: scale(1.10); box-shadow: 0 0 16px 4px rgba(255,255,0,0.95); }
+                100% { transform: scale(1); box-shadow: 0 0 8px 2px rgba(255,255,0,0.35); }
             }
         </style>
     </head>
@@ -2353,8 +2359,7 @@ def back_to_zones(n_clicks):
 # Update selected node display in RFID section
 @app.callback(
     Output('selected-node-display','children'),
-    Input('selected-node-store','data'),
-    prevent_initial_call=True
+    Input('selected-node-store','data')
 )
 def update_selected_node_display(node_data):
     if node_data and 'node' in node_data:
