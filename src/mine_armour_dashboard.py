@@ -1117,7 +1117,6 @@ def zone_select_layout():
             html.Div([
                 html.Div([
                     html.H3([
-                        html.I(className="fas fa-exclamation-triangle", style={'color': '#ffcc00', 'marginRight': '8px'}),
                         "Live Alerts"
                     ], style={'color': '#ffffff', 'marginBottom': '20px', 'textAlign': 'center'}),
                     html.Div(id='landing-alerts-list', children=[
@@ -1146,9 +1145,10 @@ def nodes_layout(zone_name):
     # Get nodes for the selected zone
     zone_nodes = {
         'ZONE_A': [
-            {'id': '1298', 'name': 'Node 1298', 'status': 'Active'},
-            {'id': '1753', 'name': 'Node 1753', 'status': 'Active'},
-            {'id': '1456', 'name': 'Node 1456', 'status': 'Active'}
+            {'id': 'C7761005', 'name': 'NODE C7761005 - SUSHMA', 'status': 'Active'},
+            {'id': '93BA302D', 'name': 'NODE 93BA302D - TRISHALA', 'status': 'Active'},
+            {'id': '7AA81505', 'name': 'NODE 7AA81505 - RANJHANA', 'status': 'Active'},
+            {'id': 'DB970104', 'name': 'NODE DB970104 - LOKESH', 'status': 'Active'}
         ],
         'ZONE_B': [
             {'id': '2001', 'name': 'Node 2001', 'status': 'Active'},
@@ -1447,7 +1447,6 @@ def vitals_layout():
             dbc.Card([
                 dbc.CardHeader([
                     html.H4([
-                        html.I(className="fas fa-id-card me-2", style={'color': '#ff6b6b'}),
                         "RFID Checkpoint Status"
                     ], style={'color': '#ffffff', 'margin': '0'})
                 ], style={'background': 'linear-gradient(45deg, #660000, #990000)', 'border': 'none'}),
@@ -1492,7 +1491,6 @@ def vitals_layout():
             dbc.Card([
                 dbc.CardHeader([
                     html.H4([
-                        html.I(className="fas fa-exclamation-triangle me-2", style={'color': '#ffcc00'}),
                         "Alerts"
                     ], style={'color': '#ffffff', 'margin': '0'})
                 ], style={'background': 'linear-gradient(45deg, #2d0000, #550000)', 'border': 'none'}),
