@@ -11,7 +11,7 @@ import json
 import time
 import threading
 import ssl
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import deque
 import logging
 
@@ -22,6 +22,7 @@ import plotly.express as px
 import dash
 from dash import dcc, html, Input, Output, State, ALL, callback_context
 import dash_bootstrap_components as dbc
+import dash
 from dash.exceptions import PreventUpdate
 
 # Load environment variables
@@ -1076,6 +1077,8 @@ app.index_string = '''
 app.layout = html.Div([
     dcc.Location(id='url', refresh=False),
     dcc.Store(id='chosen-zone-store'),
+    dcc.Store(id='alerts-store'),
+    dcc.Store(id='last-hr-store'),
     dcc.Store(id='selected-node-store', storage_type='session'),
     dcc.Store(id='auth-store', storage_type='session'),
     html.Div(id='page-content')
@@ -1085,28 +1088,55 @@ app.layout = html.Div([
 # Page: Zone Selection
 # ---------------------------
 def zone_select_layout():
-    # Full screen centered flex container
+    # Full screen layout with main content on left and alerts on right
     return html.Div([
         html.Div([
+            # Left side - Main zone selection
             html.Div([
-                html.H1("MINE ARMOUR", className='landing-title'),
-                html.Div("Protecting Miners Preserving Lives", className='landing-subtext', style={'fontSize':'0.95rem','marginTop':'-18px','marginBottom':'10px','letterSpacing':'.8px','color':'#ffcccc','fontWeight':'600'}),
-                dcc.Dropdown(
-                    id='zone-select-only',
-                    options=[
-                        {'label':'Zone A','value':'ZONE_A'},
-                        {'label':'Zone B','value':'ZONE_B'},
-                        {'label':'Zone C','value':'ZONE_C'}
-                    ],
-                    value='ZONE_A',
-                    clearable=False,
-                    placeholder='Select Zone',
-                    className='landing-dropdown'
-                ),
-                html.Button("TRACK", id='go-to-vitals-btn', n_clicks=0, className='landing-btn'),
-                html.Div(id='zone-select-msg', className='landing-subtext')
-            ], className='landing-card')
-        ], className='landing-wrapper')
+                html.Div([
+                    html.H1("MINE ARMOUR", className='landing-title'),
+                    html.Div("Protecting Miners Preserving Lives", className='landing-subtext', style={'fontSize':'0.95rem','marginTop':'-18px','marginBottom':'10px','letterSpacing':'.8px','color':'#ffcccc','fontWeight':'600'}),
+                    dcc.Dropdown(
+                        id='zone-select-only',
+                        options=[
+                            {'label':'Zone A','value':'ZONE_A'},
+                            {'label':'Zone B','value':'ZONE_B'},
+                            {'label':'Zone C','value':'ZONE_C'}
+                        ],
+                        value='ZONE_A',
+                        clearable=False,
+                        placeholder='Select Zone',
+                        className='landing-dropdown'
+                    ),
+                    html.Button("TRACK", id='go-to-vitals-btn', n_clicks=0, className='landing-btn'),
+                    html.Div(id='zone-select-msg', className='landing-subtext')
+                ], className='landing-card')
+            ], style={'flex': '1', 'display': 'flex', 'alignItems': 'center', 'justifyContent': 'center', 'padding': '40px'}),
+            
+            # Right side - Alerts panel
+            html.Div([
+                html.Div([
+                    html.H3([
+                        html.I(className="fas fa-exclamation-triangle", style={'color': '#ffcc00', 'marginRight': '8px'}),
+                        "Live Alerts"
+                    ], style={'color': '#ffffff', 'marginBottom': '20px', 'textAlign': 'center'}),
+                    html.Div(id='landing-alerts-list', children=[
+                        html.P("No active alerts", style={'color': '#99aab5', 'textAlign': 'center', 'fontStyle': 'italic'})
+                    ], style={'minHeight': '200px', 'maxHeight': '400px', 'overflowY': 'auto'}),
+                    html.Div([
+                        dbc.Button("Clear All Alerts", id='landing-clear-alerts-btn', color='danger', size='sm', style={'width': '100%'})
+                    ], style={'marginTop': '15px'})
+                ], style={
+                    'background': 'linear-gradient(145deg, #1A0000 0%, #2D0000 55%, #1A0000 100%)',
+                    'border': '1px solid #800000',
+                    'borderRadius': '15px',
+                    'padding': '25px',
+                    'boxShadow': '0 8px 25px rgba(128,0,0,0.4)',
+                    'minHeight': '300px'
+                })
+            ], style={'width': '350px', 'padding': '40px 40px 40px 20px'})
+            
+        ], style={'display': 'flex', 'minHeight': '100vh', 'alignItems': 'stretch'})
     ])
 
 # ---------------------------
@@ -1455,6 +1485,28 @@ def vitals_layout():
             ], style={'border': '1px solid #660000', 'boxShadow': '0 4px 8px rgba(255,107,107,0.2)'})
         ], width=12)
     ], className="mb-4"),
+
+    # Alerts Section (shows important alerts like high heart rate with zone/node context)
+    dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader([
+                    html.H4([
+                        html.I(className="fas fa-exclamation-triangle me-2", style={'color': '#ffcc00'}),
+                        "Alerts"
+                    ], style={'color': '#ffffff', 'margin': '0'})
+                ], style={'background': 'linear-gradient(45deg, #2d0000, #550000)', 'border': 'none'}),
+                dbc.CardBody([
+                    html.Div(id='alerts-list', children=[
+                        html.P("No alerts", style={'color': '#99aab5'})
+                    ]),
+                    html.Div([
+                        dbc.Button("Clear Alerts", id='clear-alerts-btn', color='danger', size='sm')
+                    ], style={'textAlign': 'right', 'marginTop': '10px'})
+                ], style={'background': 'linear-gradient(135deg, #1a0000, #330000)', 'color': '#ffffff'})
+            ], style={'border': '1px solid #660000', 'boxShadow': '0 4px 8px rgba(255,107,107,0.2)'}),
+        ], width=12)
+    ], className='mb-4'),
     
     # GPS and Additional Sensors Section Header
     dbc.Row([
@@ -2511,6 +2563,167 @@ def update_rfid_checkpoint_display(n, node_data):
                       style={'color': '#ff4444', 'textAlign': 'center'})], "Error"
 
 
+# ---------------------------
+# Alerts: monitor and render
+# ---------------------------
+@app.callback(
+    Output('alerts-store', 'data'),
+    [Input('interval-component', 'n_intervals'), Input('clear-alerts-btn', 'n_clicks')],
+    [State('alerts-store', 'data'), State('chosen-zone-store', 'data'), State('selected-node-store', 'data')]
+)
+def monitor_alerts(n, clear_clicks, alerts_data, zone_data, node_data):
+    """Check latest heart rate and append alert when threshold exceeded (HR > 10).
+    Also clear alerts immediately when Clear Alerts button is pressed.
+    """
+    try:
+        ctx = callback_context
+        # If clear button triggered, reset alerts immediately
+        if ctx.triggered and ctx.triggered[0]['prop_id'].startswith('clear-alerts-btn'):
+            return []
+
+        if alerts_data is None:
+            alerts = []
+        else:
+            alerts = list(alerts_data)
+
+        latest = data_manager.get_gas_data().get('latest', {})
+        hr = latest.get('heartRate', None)
+
+        # Determine zone and node for context
+        zone = zone_data.get('zone') if zone_data else 'Unknown'
+        node = node_data.get('node') if node_data else 'Unknown'
+
+        # Only trigger when we have a numeric HR and above threshold
+        if hr is not None and isinstance(hr, (int, float)) and hr > 10:
+            # Avoid spamming duplicate alerts by ensuring latest alert timestamp differs
+            now = datetime.now()
+            alert_entry = {
+                'ts': now.isoformat(),
+                'type': 'HEART_RATE',
+                'message': f'High heart rate: {hr} BPM',
+                'zone': zone,
+                'node': node
+            }
+
+            # If last alert is identical in message and node within 5 seconds, skip
+            if not alerts:
+                alerts.append(alert_entry)
+            else:
+                try:
+                    last_ts = datetime.fromisoformat(alerts[-1]['ts'])
+                    if not (alerts[-1]['type'] == alert_entry['type'] and alerts[-1]['node'] == alert_entry['node'] and alerts[-1]['message'] == alert_entry['message'] and (last_ts > now - timedelta(seconds=5))):
+                        alerts.append(alert_entry)
+                except Exception:
+                    alerts.append(alert_entry)
+
+        return alerts
+    except Exception as e:
+        logging.error(f"Error in monitor_alerts: {e}")
+        return dash.no_update
+
+
+@app.callback(
+    Output('alerts-list', 'children'),
+    [Input('alerts-store', 'data'), Input('clear-alerts-btn', 'n_clicks')],
+    prevent_initial_call=False
+)
+def render_alerts(alerts_data, clear_clicks):
+    """Render alerts into the Alerts card. Clear button resets to empty."""
+    try:
+        # If clear button pressed, reset display
+        ctx = callback_context
+        if ctx.triggered and ctx.triggered[0]['prop_id'].startswith('clear-alerts-btn'):
+            return [html.P("No alerts", style={'color': '#99aab5'})]
+
+        if not alerts_data:
+            return [html.P("No alerts", style={'color': '#99aab5'})]
+
+        # Build list of alert rows (most recent first)
+        rows = []
+        for a in reversed(list(alerts_data))[-10:]:
+            ts = a.get('ts')
+            try:
+                ts_fmt = datetime.fromisoformat(ts).strftime('%H:%M:%S')
+            except Exception:
+                ts_fmt = ts
+            rows.append(html.Div([
+                html.Span(f"[{ts_fmt}] ", style={'color': '#ffcc00', 'fontWeight': '700'}),
+                html.Strong(a.get('message', ''), style={'color': '#ffffff'}),
+                html.Span(f" — Zone: {a.get('zone', 'Unknown')}", style={'color': '#ff8888', 'marginLeft': '8px'}),
+                html.Span(f" Node: {a.get('node', 'Unknown')}", style={'color': '#ffaaaa', 'marginLeft': '6px'})
+            ], style={'padding': '6px 0', 'borderBottom': '1px solid rgba(255,255,255,0.03)'}))
+
+        return rows
+    except Exception as e:
+        logging.error(f"Error rendering alerts: {e}")
+        return [html.P("Error loading alerts", style={'color': '#ff4444'})]
+
+
+# Landing page alerts callback (separate from vitals page alerts)
+@app.callback(
+    Output('landing-alerts-list', 'children'),
+    [Input('alerts-store', 'data'), Input('landing-clear-alerts-btn', 'n_clicks')],
+    prevent_initial_call=False
+)
+def render_landing_alerts(alerts_data, clear_clicks):
+    """Render alerts into the landing page alerts panel."""
+    try:
+        # If clear button pressed, reset display
+        ctx = callback_context
+        if ctx.triggered and ctx.triggered[0]['prop_id'].startswith('landing-clear-alerts-btn'):
+            return [html.P("No active alerts", style={'color': '#99aab5', 'textAlign': 'center', 'fontStyle': 'italic'})]
+
+        if not alerts_data:
+            return [html.P("No active alerts", style={'color': '#99aab5', 'textAlign': 'center', 'fontStyle': 'italic'})]
+
+        # Build list of alert rows (most recent first, compact format for landing page)
+        rows = []
+        for a in reversed(list(alerts_data))[-8:]:  # Show fewer alerts on landing page
+            ts = a.get('ts')
+            try:
+                ts_fmt = datetime.fromisoformat(ts).strftime('%H:%M:%S')
+            except Exception:
+                ts_fmt = ts
+            
+            # More compact format for landing page
+            rows.append(html.Div([
+                html.Div([
+                    html.I(className="fas fa-exclamation-circle", style={'color': '#ff4444', 'marginRight': '8px'}),
+                    html.Strong(f"{a.get('zone', 'Unknown')}", style={'color': '#ff8888'}),
+                    html.Span(f" - Node {a.get('node', 'Unknown')}", style={'color': '#ffaaaa'})
+                ], style={'marginBottom': '4px'}),
+                html.Div([
+                    html.Span(f"[{ts_fmt}] ", style={'color': '#ffcc00', 'fontSize': '0.85rem'}),
+                    html.Span(a.get('message', ''), style={'color': '#ffffff', 'fontSize': '0.85rem'})
+                ])
+            ], style={
+                'padding': '12px',
+                'marginBottom': '8px',
+                'background': 'rgba(255, 68, 68, 0.1)',
+                'border': '1px solid rgba(255, 68, 68, 0.3)',
+                'borderRadius': '8px',
+                'borderLeft': '4px solid #ff4444'
+            }))
+
+        return rows
+    except Exception as e:
+        logging.error(f"Error rendering landing alerts: {e}")
+        return [html.P("Error loading alerts", style={'color': '#ff4444', 'textAlign': 'center'})]
+
+
+# Clear alerts callback (handles both clear buttons)
+@app.callback(
+    Output('alerts-store', 'data', allow_duplicate=True),
+    Input('landing-clear-alerts-btn', 'n_clicks'),
+    prevent_initial_call=True
+)
+def clear_landing_alerts(n_clicks):
+    """Clear alerts when landing page clear button is clicked."""
+    if n_clicks and n_clicks > 0:
+        return []  # Clear all alerts
+    return dash.no_update
+
+
 if __name__ == '__main__':
     try:
         # Connect to MQTT broker
@@ -2527,10 +2740,10 @@ if __name__ == '__main__':
         print("❤ Health Sensors: Heart Rate, SpO2, GSR, Stress")
         print("🌡 Environment: Temperature, Humidity")
         print("📍 GPS: Location tracking")
-        
-        # Run the dashboard
-        app.run_server(debug=True, host='0.0.0.0', port=8050)
-        
+
+        # Run the dashboard (disable dev tools UI/hot-reload in production to remove debug overlay)
+        app.run_server(debug=False, dev_tools_ui=False, dev_tools_hot_reload=False, host='0.0.0.0', port=8050)
+
     except KeyboardInterrupt:
         print("\n🛑 Shutting down Mine Armour Dashboard...")
         mqtt_client.disconnect()
