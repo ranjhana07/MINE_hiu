@@ -834,14 +834,17 @@ class SensorDataManager:
                 # Increment the per-tag counter
                 cnt = self._rfid_tag_scan_counts.get(tag_lc, 0) + 1
                 self._rfid_tag_scan_counts[tag_lc] = cnt
-
+                # Map the first four scans to the four checkpoints in order
                 if cnt == 1:
                     checkpoint_id = 'Main Gate Checkpoint'
                 elif cnt == 2:
                     checkpoint_id = 'Weighbridge Checkpoint'
+                elif cnt == 3:
+                    checkpoint_id = 'Fuel Station Checkpoint'
+                elif cnt == 4:
+                    checkpoint_id = 'Workshop Checkpoint'
                 else:
-                    # For subsequent scans, fall back to the normal station mapping
-                    # or mark further checkpoints if desired. For now, keep default.
+                    # For subsequent scans beyond four, fall back to the normal station mapping
                     checkpoint_id = checkpoint_mapping.get(station_id, f'Station {station_id}')
                 # Force the node to C7761005 so progress is stored under that person's node
                 node_id = 'C7761005'
