@@ -1221,15 +1221,13 @@ def zone_select_layout():
                         dbc.Row([
                             dbc.Col(dbc.Card([
                                 dbc.CardBody([
-                                    html.H3("Zone A", style={'color':'#fff','fontWeight':'700'}),
-                                    html.P("Click to track Zone A", style={'color':'#ffdede'}),
+                        html.H3("Zone A", style={'color':'#fff','fontWeight':'700'}),
                                     dbc.Button("ENTER Zone A", id='zone-A-btn', color='danger', className='mt-2', n_clicks=0)
                                 ])
                             ], style=card_style), width=6),
                             dbc.Col(dbc.Card([
                                 dbc.CardBody([
-                                    html.H3("Zone B", style={'color':'#fff','fontWeight':'700'}),
-                                    html.P("Click to track Zone B", style={'color':'#ffdede'}),
+                        html.H3("Zone B", style={'color':'#fff','fontWeight':'700'}),
                                     dbc.Button("ENTER Zone B", id='zone-B-btn', color='danger', className='mt-2', n_clicks=0)
                                 ])
                             ], style=card_style), width=6)
@@ -1237,15 +1235,13 @@ def zone_select_layout():
                         dbc.Row([
                             dbc.Col(dbc.Card([
                                 dbc.CardBody([
-                                    html.H3("Zone C", style={'color':'#fff','fontWeight':'700'}),
-                                    html.P("Click to track Zone C", style={'color':'#ffdede'}),
+                        html.H3("Zone C", style={'color':'#fff','fontWeight':'700'}),
                                     dbc.Button("ENTER Zone C", id='zone-C-btn', color='danger', className='mt-2', n_clicks=0)
                                 ])
                             ], style=card_style), width=6),
                             dbc.Col(dbc.Card([
                                 dbc.CardBody([
-                                    html.H3("Zone D", style={'color':'#fff','fontWeight':'700'}),
-                                    html.P("Click to track Zone D", style={'color':'#ffdede'}),
+                        html.H3("Zone D", style={'color':'#fff','fontWeight':'700'}),
                                     dbc.Button("ENTER Zone D", id='zone-D-btn', color='danger', className='mt-2', n_clicks=0)
                                 ])
                             ], style=card_style), width=6)
