@@ -2455,15 +2455,20 @@ def update_rfid_checkpoint_display(n, node_data):
                     html.Div(checkpoint_name, style={
                         'color': '#ffffff',
                         'fontSize': '11px',
-                        'textAlign': 'center',
+                        'textAlign': 'left',
                         'marginTop': '8px',
                         'fontWeight': 'bold',
                         'maxWidth': '90px',
                         'lineHeight': '1.2',
                         'overflow': 'hidden',
-                        'width': '100%'
+                        'width': '80px',
+                        'margin': '0 auto'
                     }),
-                    status_info
+                    html.Div([
+                        html.Small("PENDING", style={'color': '#ff4444', 'fontWeight': 'bold', 'fontSize': '9px'}),
+                        html.Br(),
+                        html.Small("Waiting...", style={'color': '#cccccc', 'fontSize': '8px'})
+                    ], style={'textAlign': 'left', 'whiteSpace': 'nowrap', 'width': '80px', 'margin': '0 auto', 'marginTop': '2px'})
                 ], style={'display': 'inline-block', 'margin': '0 15px', 'textAlign': 'center', 'verticalAlign': 'top'})
                 flow_elements.append(checkpoint_container)
                 if i < len(default_checkpoints) - 1:
@@ -2568,16 +2573,21 @@ def update_rfid_checkpoint_display(n, node_data):
                 html.Div(checkpoint_name, style={
                     'color': '#ffffff',
                     'fontSize': '11px',
-                    'textAlign': 'center',
+                    'textAlign': 'left',
                     'marginTop': '8px',
+                    'marginLeft': '8px',  # shift right so it's just below the circle
                     'fontWeight': 'bold',
                     'maxWidth': '90px',
                     'lineHeight': '1.2',
                     'overflow': 'hidden',
                     'width': '100%'
                 }),
-                status_info
-            ], style={'display': 'inline-block', 'margin': '0 15px', 'textAlign': 'center', 'verticalAlign': 'top'})
+                html.Div([
+                    html.Small("PENDING", style={'color': '#ff4444', 'fontWeight': 'bold', 'fontSize': '9px', 'marginLeft': '8px'}),
+                    html.Br(),
+                    html.Small("Waiting...", style={'color': '#cccccc', 'fontSize': '8px', 'marginLeft': '8px'})
+                ], style={'textAlign': 'left', 'whiteSpace': 'nowrap', 'width': '80px', 'margin': '0', 'marginTop': '2px'})
+            ], style={'display': 'inline-block', 'margin': '0 15px', 'textAlign': 'left', 'verticalAlign': 'top'})
             
             flow_elements.append(checkpoint_container)
             
