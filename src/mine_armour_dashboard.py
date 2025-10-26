@@ -1208,31 +1208,53 @@ app.layout = html.Div([
 # Page: Zone Selection
 # ---------------------------
 def zone_select_layout():
-    # Full screen layout with main content on left and alerts on right
+    # Full screen layout with a 2x2 grid of zone cards on the left and alerts on the right
     return html.Div([
         html.Div([
-            # Left side - Main zone selection
+            # Left side - 2x2 grid zone selection
             html.Div([
                 html.Div([
                     html.H1("MINE ARMOUR", className='landing-title'),
                     html.Div("Protecting Miners Preserving Lives", className='landing-subtext', style={'fontSize':'0.95rem','marginTop':'-18px','marginBottom':'10px','letterSpacing':'.8px','color':'#ffcccc','fontWeight':'600'}),
-                    dcc.Dropdown(
-                        id='zone-select-only',
-                        options=[
-                            {'label':'Zone A','value':'ZONE_A'},
-                            {'label':'Zone B','value':'ZONE_B'},
-                            {'label':'Zone C','value':'ZONE_C'}
-                        ],
-                        value='ZONE_A',
-                        clearable=False,
-                        placeholder='Select Zone',
-                        className='landing-dropdown'
-                    ),
-                    html.Button("TRACK", id='go-to-vitals-btn', n_clicks=0, className='landing-btn'),
+                    # 2x2 Grid of Zone Cards
+                    html.Div([
+                        dbc.Row([
+                            dbc.Col(dbc.Card([
+                                dbc.CardBody([
+                                    html.H3("Zone A", style={'color':'#fff','fontWeight':'700'}),
+                                    html.P("Click to track Zone A", style={'color':'#ffdede'}),
+                                    dbc.Button("ENTER Zone A", id='zone-A-btn', color='danger', className='mt-2', n_clicks=0)
+                                ])
+                            ], style=card_style), width=6),
+                            dbc.Col(dbc.Card([
+                                dbc.CardBody([
+                                    html.H3("Zone B", style={'color':'#fff','fontWeight':'700'}),
+                                    html.P("Click to track Zone B", style={'color':'#ffdede'}),
+                                    dbc.Button("ENTER Zone B", id='zone-B-btn', color='danger', className='mt-2', n_clicks=0)
+                                ])
+                            ], style=card_style), width=6)
+                        ], className='mb-3'),
+                        dbc.Row([
+                            dbc.Col(dbc.Card([
+                                dbc.CardBody([
+                                    html.H3("Zone C", style={'color':'#fff','fontWeight':'700'}),
+                                    html.P("Click to track Zone C", style={'color':'#ffdede'}),
+                                    dbc.Button("ENTER Zone C", id='zone-C-btn', color='danger', className='mt-2', n_clicks=0)
+                                ])
+                            ], style=card_style), width=6),
+                            dbc.Col(dbc.Card([
+                                dbc.CardBody([
+                                    html.H3("Zone D", style={'color':'#fff','fontWeight':'700'}),
+                                    html.P("Click to track Zone D", style={'color':'#ffdede'}),
+                                    dbc.Button("ENTER Zone D", id='zone-D-btn', color='danger', className='mt-2', n_clicks=0)
+                                ])
+                            ], style=card_style), width=6)
+                        ])
+                    ], style={'width':'100%','marginTop':'18px'}),
                     html.Div(id='zone-select-msg', className='landing-subtext')
                 ], className='landing-card')
             ], style={'flex': '1', 'display': 'flex', 'alignItems': 'center', 'justifyContent': 'center', 'padding': '40px'}),
-            
+
             # Right side - Alerts panel
             html.Div([
                 html.Div([
@@ -1254,7 +1276,7 @@ def zone_select_layout():
                     'minHeight': '300px'
                 })
             ], style={'width': '350px', 'padding': '40px 40px 40px 20px'})
-            
+
         ], style={'display': 'flex', 'minHeight': '100vh', 'alignItems': 'stretch'})
     ])
 
@@ -1281,6 +1303,12 @@ def nodes_layout(zone_name):
             {'id': '3134', 'name': 'Node 3134', 'status': 'Active'}
         ]
     }
+    # Add Zone D as a valid zone (placeholder nodes)
+    zone_nodes['ZONE_D'] = [
+        {'id': '4001', 'name': 'Node 4001', 'status': 'Active'},
+        {'id': '4055', 'name': 'Node 4055', 'status': 'Active'},
+        {'id': '4089', 'name': 'Node 4089', 'status': 'Active'}
+    ]
     
     nodes = zone_nodes.get(zone_name, [])
     
@@ -1856,15 +1884,38 @@ def display_page(pathname, zone_data, auth_data):
     return zone_select_layout()
 
 @app.callback(
-    [Output('chosen-zone-store','data'), Output('zone-select-msg','children'), Output('url','pathname')],
-    Input('go-to-vitals-btn','n_clicks'),
+    [Output('chosen-zone-store','data'), Output('zone-select-msg','children'), Output('url','pathname', allow_duplicate=True)],
+    [Input('go-to-vitals-btn','n_clicks'), Input('zone-A-btn','n_clicks'), Input('zone-B-btn','n_clicks'), Input('zone-C-btn','n_clicks'), Input('zone-D-btn','n_clicks')],
     State('zone-select-only','value'),
     prevent_initial_call=True
 )
-def go_to_nodes(n, zone_value):
-    if not zone_value:
-        return dash.no_update, 'Please choose a zone.', dash.no_update
-    return {'zone': zone_value}, '', '/nodes'
+def go_to_nodes(n_track, n_a, n_b, n_c, n_d, zone_value):
+    # Determine which control triggered the callback
+    ctx = callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+    triggered = ctx.triggered[0]['prop_id'].split('.')[0]
+
+    # If user clicked the TRACK button, use the dropdown value
+    if triggered == 'go-to-vitals-btn':
+        if not zone_value:
+            return dash.no_update, 'Please choose a zone.', dash.no_update
+        return {'zone': zone_value}, '', '/nodes'
+
+    # Otherwise map the zone-card button to a zone value
+    mapping = {
+        'zone-A-btn': 'ZONE_A',
+        'zone-B-btn': 'ZONE_B',
+        'zone-C-btn': 'ZONE_C',
+        'zone-D-btn': 'ZONE_D'
+    }
+    zone = mapping.get(triggered, None)
+    if not zone:
+        raise PreventUpdate
+    return {'zone': zone}, '', '/nodes'
+
+
+# (zone card clicks are handled in the merged go_to_nodes callback above)
 
 # ---------------------------
 # Login callback
@@ -2760,9 +2811,10 @@ def update_rfid_checkpoint_display(n, node_data):
 # Alerts: monitor and render
 # ---------------------------
 @app.callback(
-    Output('alerts-store', 'data'),
+    Output('alerts-store', 'data', allow_duplicate=True),
     [Input('interval-component', 'n_intervals'), Input('clear-alerts-btn', 'n_clicks')],
-    [State('alerts-store', 'data'), State('chosen-zone-store', 'data'), State('selected-node-store', 'data')]
+    [State('alerts-store', 'data'), State('chosen-zone-store', 'data'), State('selected-node-store', 'data')],
+    prevent_initial_call=True
 )
 def monitor_alerts(n, clear_clicks, alerts_data, zone_data, node_data):
     """Check latest heart rate and append alert when threshold exceeded (HR > 10).
@@ -2919,12 +2971,13 @@ def clear_landing_alerts(n_clicks):
 
 if __name__ == '__main__':
     try:
-        # Connect to MQTT broker
-        mqtt_client.connect()
-        
-        # Wait a moment for connection
-        time.sleep(2)
-        
+        # Connect to MQTT broker in background so server startup isn't blocked
+        # (network/DNS delays can make a blocking connect hang for many seconds)
+        threading.Thread(target=mqtt_client.connect, daemon=True).start()
+
+        # Small pause to let background thread initiate (non-blocking)
+        time.sleep(0.2)
+
         print("🛡 Starting Mine Armour Multi-Sensor Dashboard...")
         print("📊 Dashboard will be available at: http://localhost:8050")
         print("🔄 Real-time updates every second")
