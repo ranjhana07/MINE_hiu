@@ -652,14 +652,13 @@ class SensorDataManager:
                     '1298': ['Entry Gate', 'Safety Check', 'Equipment Bay', 'Deep Section'],
                     '1753': ['Main Tunnel', 'Gas Monitor', 'Emergency Exit'],
                     '1456': ['Shaft Entry', 'Mining Face', 'Ventilation Hub'],
-                    # Zone B checkpoints
-                    '2001': ['North Entry', 'Equipment Room', 'Gas Detection', 'Exit Portal'],
-                    '2055': ['Central Hub', 'Safety Station', 'Mining Zone'],
-                    '2089': ['Secondary Tunnel', 'Emergency Bay', 'Final Check'],
-                    # Zone C checkpoints
-                    '3012': ['South Gate', 'Tool Center', 'Deep Shaft', 'Return Path'],
-                    '3067': ['Control Point', 'Ventilation Room', 'Safety Exit'],
-                    '3134': ['Access Tunnel', 'Equipment Bay', 'Emergency Station']
+                    # Primary node set used across all zones (project uses these 4 nodes)
+                    # Zone A checkpoint names (standardised across the primary nodes)
+                    'C7761005': ['Main Gate Checkpoint', 'Weighbridge Checkpoint', 'Fuel Station Checkpoint', 'Workshop Checkpoint'],
+                    '93BA302D': ['Main Gate Checkpoint', 'Weighbridge Checkpoint', 'Fuel Station Checkpoint', 'Workshop Checkpoint'],
+                    '7AA81505': ['Main Gate Checkpoint', 'Weighbridge Checkpoint', 'Fuel Station Checkpoint', 'Workshop Checkpoint'],
+                    'DB970104': ['Main Gate Checkpoint', 'Weighbridge Checkpoint', 'Fuel Station Checkpoint', 'Workshop Checkpoint'],
+                    # Zone B and C checkpoint lists removed; only four primary node IDs are used for all zones
                 }
             }
         }
@@ -782,10 +781,11 @@ class SensorDataManager:
             station_num = station_id[1:] if len(station_id) > 1 else '1'  # Extract station number
             
             # Map zones to node IDs
+            # Use the 4 primary nodes for every zone (A/B/C) so station numbers map to these nodes
             zone_nodes = {
-                'A': ['1298', '1753', '1456'],
-                'B': ['2001', '2055', '2089'], 
-                'C': ['3012', '3067', '3134']
+                'A': ['C7761005', '93BA302D', '7AA81505', 'DB970104'],
+                'B': ['C7761005', '93BA302D', '7AA81505', 'DB970104'],
+                'C': ['C7761005', '93BA302D', '7AA81505', 'DB970104']
             }
             
             # Get node_id based on zone and station number
@@ -2425,8 +2425,71 @@ def update_selected_node_display(node_data):
 def update_rfid_checkpoint_display(n, node_data):
     try:
         if not node_data or 'node' not in node_data:
-            return [html.P("Select a node to view checkpoint flow", 
-                          style={'color': '#999999', 'fontStyle': 'italic', 'textAlign': 'center'})], "No scans yet"
+            # Always render the diagram for the four checkpoints, even if no node selected
+            default_checkpoints = ['Main Gate Checkpoint', 'Weighbridge Checkpoint', 'Fuel Station Checkpoint', 'Workshop Checkpoint']
+            flow_elements = []
+            for i, checkpoint_name in enumerate(default_checkpoints):
+                circle_style = {
+                    'width': '60px',
+                    'height': '60px',
+                    'borderRadius': '50%',
+                    'background': 'linear-gradient(45deg, #dc3545, #ff4444)',
+                    'border': '3px solid #ff4444',
+                    'display': 'flex',
+                    'alignItems': 'center',
+                    'justifyContent': 'center',
+                    'boxShadow': '0 0 10px rgba(255, 68, 68, 0.3)',
+                    'position': 'relative',
+                    'opacity': '0.7'
+                }
+                icon = html.I(className="fas fa-times", style={'color': 'white', 'fontSize': '20px'})
+                status_info = html.Div([
+                    html.Small("PENDING", style={'color': '#ff4444', 'fontWeight': 'bold', 'fontSize': '9px'}),
+                    html.Br(),
+                    html.Small("Waiting...", style={'color': '#cccccc', 'fontSize': '8px'})
+                ], style={'position': 'absolute', 'top': '70px', 'textAlign': 'center', 'whiteSpace': 'nowrap', 'width': '80px'})
+                checkpoint_container = html.Div([
+                    html.Div([
+                        icon,
+                        status_info
+                    ], style=circle_style),
+                    html.Div(checkpoint_name, style={
+                        'color': '#ffffff',
+                        'fontSize': '11px',
+                        'textAlign': 'center',
+                        'marginTop': '35px',
+                        'fontWeight': 'bold',
+                        'maxWidth': '90px',
+                        'lineHeight': '1.2',
+                        'overflow': 'hidden'
+                    })
+                ], style={'display': 'inline-block', 'margin': '0 15px', 'textAlign': 'center', 'verticalAlign': 'top'})
+                flow_elements.append(checkpoint_container)
+                if i < len(default_checkpoints) - 1:
+                    arrow = html.Div([
+                        html.I(className="fas fa-arrow-right", style={
+                            'color': '#666666',
+                            'fontSize': '18px',
+                            'boxShadow': 'none',
+                            'textShadow': 'none'
+                        })
+                    ], style={
+                        'display': 'inline-block',
+                        'margin': '0 8px',
+                        'paddingTop': '25px',
+                        'verticalAlign': 'top'
+                    })
+                    flow_elements.append(arrow)
+            flow_diagram = html.Div(flow_elements, style={
+                'display': 'flex',
+                'alignItems': 'flex-start',
+                'justifyContent': 'center',
+                'flexWrap': 'nowrap',
+                'padding': '15px 10px',
+                'minHeight': '140px',
+                'overflowX': 'auto'
+            })
+            return [flow_diagram], "No scans yet"
         
         selected_node = node_data['node']
         
