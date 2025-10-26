@@ -2451,18 +2451,19 @@ def update_rfid_checkpoint_display(n, node_data):
                 checkpoint_container = html.Div([
                     html.Div([
                         icon,
-                        status_info
                     ], style=circle_style),
                     html.Div(checkpoint_name, style={
                         'color': '#ffffff',
                         'fontSize': '11px',
                         'textAlign': 'center',
-                        'marginTop': '35px',
+                        'marginTop': '8px',
                         'fontWeight': 'bold',
                         'maxWidth': '90px',
                         'lineHeight': '1.2',
-                        'overflow': 'hidden'
-                    })
+                        'overflow': 'hidden',
+                        'width': '100%'
+                    }),
+                    status_info
                 ], style={'display': 'inline-block', 'margin': '0 15px', 'textAlign': 'center', 'verticalAlign': 'top'})
                 flow_elements.append(checkpoint_container)
                 if i < len(default_checkpoints) - 1:
@@ -2563,18 +2564,19 @@ def update_rfid_checkpoint_display(n, node_data):
             checkpoint_container = html.Div([
                 html.Div([
                     icon,
-                    status_info
                 ], style=circle_style),
                 html.Div(checkpoint_name, style={
                     'color': '#ffffff',
                     'fontSize': '11px',
                     'textAlign': 'center',
-                    'marginTop': '35px',
+                    'marginTop': '8px',
                     'fontWeight': 'bold',
                     'maxWidth': '90px',
                     'lineHeight': '1.2',
-                    'overflow': 'hidden'
-                })
+                    'overflow': 'hidden',
+                    'width': '100%'
+                }),
+                status_info
             ], style={'display': 'inline-block', 'margin': '0 15px', 'textAlign': 'center', 'verticalAlign': 'top'})
             
             flow_elements.append(checkpoint_container)
