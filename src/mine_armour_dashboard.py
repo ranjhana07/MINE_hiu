@@ -21,6 +21,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import dash
 from dash import dcc, html, Input, Output, State, ALL, callback_context
+from flask import request, jsonify
 import dash_bootstrap_components as dbc
 import dash
 from dash.exceptions import PreventUpdate
@@ -663,6 +664,9 @@ class SensorDataManager:
             }
         }
         self.lock = threading.Lock()
+        # Per-tag scan counters to support sequence-based checkpoint progression
+        # Keyed by lower-case tag id. Used for special-case flows (e.g. c7761005 in Zone A)
+        self._rfid_tag_scan_counts = {}
     
     def add_gas_data(self, data):
         """Add new sensor data point"""
@@ -798,10 +802,12 @@ class SensorDataManager:
             
             # Map station to checkpoint names
             checkpoint_mapping = {
-                'A1': 'Entry Gate',
-                'A2': 'Safety Check', 
-                'A3': 'Equipment Bay',
-                'A4': 'Deep Section',
+                # Map station IDs to the checkpoint names used in active_checkpoints
+                # so that progress keys match the UI's expected checkpoint list.
+                'A1': 'Main Gate Checkpoint',
+                'A2': 'Weighbridge Checkpoint',
+                'A3': 'Fuel Station Checkpoint',
+                'A4': 'Workshop Checkpoint',
                 'B1': 'North Entry',
                 'B2': 'Equipment Room',
                 'B3': 'Gas Detection', 
@@ -811,7 +817,34 @@ class SensorDataManager:
                 'C3': 'Deep Shaft',
                 'C4': 'Return Path'
             }
+            # Default checkpoint id from mapping
             checkpoint_id = checkpoint_mapping.get(station_id, f'Station {station_id}')
+
+            # Special-case: for tag C7761005 (case-insensitive) in Zone A, enforce
+            # a simple two-step progression regardless of which physical station
+            # reported the scan. This implements the user's requirement:
+            #   - First scan -> Main Gate Checkpoint
+            #   - Second scan -> Weighbridge Checkpoint
+            try:
+                tag_lc = tag_id.lower() if isinstance(tag_id, str) else ''
+            except Exception:
+                tag_lc = ''
+
+            if tag_lc == 'c7761005' and zone == 'A':
+                # Increment the per-tag counter
+                cnt = self._rfid_tag_scan_counts.get(tag_lc, 0) + 1
+                self._rfid_tag_scan_counts[tag_lc] = cnt
+
+                if cnt == 1:
+                    checkpoint_id = 'Main Gate Checkpoint'
+                elif cnt == 2:
+                    checkpoint_id = 'Weighbridge Checkpoint'
+                else:
+                    # For subsequent scans, fall back to the normal station mapping
+                    # or mark further checkpoints if desired. For now, keep default.
+                    checkpoint_id = checkpoint_mapping.get(station_id, f'Station {station_id}')
+                # Force the node to C7761005 so progress is stored under that person's node
+                node_id = 'C7761005'
             
             # Store the scan
             self.data['rfid_checkpoints']['timestamps'].append(timestamp)
@@ -890,19 +923,48 @@ class MQTTClient:
         try:
             topic = message.topic
             payload = message.payload.decode('utf-8')
-            
-            if topic == self.gas_topic:
-                # Parse gas sensor JSON data
+
+            # Attempt to parse JSON payload
+            data = None
+            try:
                 data = json.loads(payload)
-                self.data_manager.add_gas_data(data)
-                logging.info(f"Received gas data: {data}")
-                
-            elif topic == self.rfid_topic:
-                # Parse RFID checkpoint data
-                data = json.loads(payload)
-                self.data_manager.add_rfid_data(data)
-                logging.info(f"Received RFID data: {data}")
-            
+            except Exception:
+                logging.debug(f"Non-JSON payload on {topic}: {payload}")
+
+            # If this message was published on the dedicated RFID topic, route to RFID handler
+            if topic == self.rfid_topic:
+                if isinstance(data, dict):
+                    self.data_manager.add_rfid_data(data)
+                    logging.info(f"Received RFID data on {self.rfid_topic}: {data}")
+                else:
+                    logging.warning(f"Received non-dict RFID payload on {self.rfid_topic}: {payload}")
+
+            # If message was published on the gas topic, try to detect whether it actually
+            # contains RFID scan fields (some publishers send scans to LOKI_2004). If so,
+            # route to the RFID handler; otherwise treat it as gas sensor data.
+            elif topic == self.gas_topic:
+                if isinstance(data, dict) and 'tag_id' in data and 'station_id' in data:
+                    # Treat as RFID scan published to gas topic
+                    self.data_manager.add_rfid_data(data)
+                    logging.info(f"Detected RFID scan on {self.gas_topic}, processed as RFID: {data}")
+                elif isinstance(data, dict):
+                    # Regular gas sensor payload
+                    self.data_manager.add_gas_data(data)
+                    logging.info(f"Received gas data: {data}")
+                else:
+                    logging.warning(f"Received unexpected payload on {self.gas_topic}: {payload}")
+            else:
+                # For any other topics, attempt to intelligently route if possible
+                if isinstance(data, dict) and 'tag_id' in data and 'station_id' in data:
+                    self.data_manager.add_rfid_data(data)
+                    logging.info(f"Received RFID-style payload on {topic}, processed as RFID: {data}")
+                elif isinstance(data, dict):
+                    # Unknown dict payload; send to gas handler by default
+                    self.data_manager.add_gas_data(data)
+                    logging.info(f"Received dict payload on {topic}, processed as gas-data fallback: {data}")
+                else:
+                    logging.debug(f"Unhandled message on {topic}: {payload}")
+
         except Exception as e:
             logging.error(f"Error processing message: {e}")
     
@@ -956,6 +1018,61 @@ app = dash.Dash(__name__, external_stylesheets=[
     "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"  # Icons
 ])
 app.title = "🛡 Mine Armour - Gas Sensor Dashboard"
+
+# --- Lightweight helper HTTP endpoints for testing/resetting RFID counters
+# These run on the same Flask server that Dash uses and are intended for
+# development/testing only. They let you simulate RFID payloads or reset
+# per-tag scan counters without restarting the dashboard.
+@app.server.route('/simulate_rfid', methods=['POST'])
+def simulate_rfid():
+    try:
+        payload = request.get_json(force=True)
+    except Exception:
+        return ("Invalid JSON", 400)
+
+    if not isinstance(payload, dict):
+        return ("Expected JSON object", 400)
+
+    # Allow direct simulation of RFID scan into data_manager
+    try:
+        data_manager.add_rfid_data(payload)
+        return ("OK", 200)
+    except Exception as e:
+        logging.error(f"Error in simulate_rfid: {e}")
+        return ("Internal Error", 500)
+
+
+@app.server.route('/reset_rfid_counter', methods=['POST'])
+def reset_rfid_counter():
+    try:
+        payload = request.get_json(force=True)
+    except Exception:
+        return ("Invalid JSON", 400)
+
+    tag = payload.get('tag_id') if isinstance(payload, dict) else None
+    if not tag:
+        return ("Missing tag_id", 400)
+
+    tag_lc = tag.lower()
+    try:
+        # Remove the tag counter so sequence restarts
+        if tag_lc in data_manager._rfid_tag_scan_counts:
+            data_manager._rfid_tag_scan_counts.pop(tag_lc, None)
+            return (f"Counter reset for {tag}", 200)
+        else:
+            return (f"No counter present for {tag}", 200)
+    except Exception as e:
+        logging.error(f"Error resetting RFID counter: {e}")
+        return ("Internal Error", 500)
+
+
+@app.server.route('/rfid_counters', methods=['GET'])
+def rfid_counters():
+    try:
+        return jsonify(data_manager._rfid_tag_scan_counts)
+    except Exception as e:
+        logging.error(f"Error returning rfid counters: {e}")
+        return ("Internal Error", 500)
 
 # Custom CSS styling with darker red-black gradient theme
 custom_style = {

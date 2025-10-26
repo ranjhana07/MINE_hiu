@@ -157,6 +157,28 @@ def run():
         logging.info("🛑 Press Ctrl+C to stop monitoring")
         
         # Start MQTT loop
+        # Start MQTT loop
+        client.loop_start()
+
+        # Helper to publish RFID scan events to topic 'rfid'
+        def publish_rfid(station_id, tag_id, qos=1):
+            try:
+                topic = 'rfid'
+                payload = json.dumps({
+                    'station_id': station_id,
+                    'tag_id': tag_id
+                })
+                logging.info(f"Publishing RFID -> topic={topic} payload={payload}")
+                client.publish(topic, payload, qos=qos)
+            except Exception as e:
+                logging.error(f"Error publishing RFID message: {e}")
+
+        # If environment requests a sample publish for testing, do it once
+        if os.getenv('TEST_PUBLISH_SAMPLE_RFID') == '1':
+            logging.info('TEST_PUBLISH_SAMPLE_RFID=1 set — publishing sample RFID message')
+            publish_rfid('A1', 'TEST_TAG_001')
+
+        # Keep original behavior (summary thread + running loop)
         client.loop_forever()
         
     except KeyboardInterrupt:
