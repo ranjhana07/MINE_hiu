@@ -1119,7 +1119,7 @@ chart_style = {
 # Custom CSS for darker red-black gradient background
 app.index_string = '''
 <!DOCTYPE html>
-<html>
+<html lang="en">
     <head>
         {%metas%}
         <title>{%title%}</title>
@@ -1864,8 +1864,16 @@ def serve_layout():
     State('auth-store','data')
 )
 def display_page(pathname, zone_data, auth_data):
-    # Not authenticated -> always show login
-    if not auth_data:
+    # Allow zone selection and node browsing without login.
+    # Only require login for the protected '/vitals' page.
+    # Expose the login page explicitly at '/login'.
+    if pathname == '/login':
+        return login_layout()
+    # If user is not authenticated and they hit the root page, redirect to /login
+    if not auth_data and pathname == '/':
+        return dcc.Location(pathname='/login', id='redirect-to-login')
+
+    if not auth_data and pathname == '/vitals':
         return login_layout()
     if pathname == '/nodes':
         # Show nodes page for the selected zone
@@ -1881,24 +1889,18 @@ def display_page(pathname, zone_data, auth_data):
 
 @app.callback(
     [Output('chosen-zone-store','data'), Output('zone-select-msg','children'), Output('url','pathname', allow_duplicate=True)],
-    [Input('go-to-vitals-btn','n_clicks'), Input('zone-A-btn','n_clicks'), Input('zone-B-btn','n_clicks'), Input('zone-C-btn','n_clicks'), Input('zone-D-btn','n_clicks')],
-    State('zone-select-only','value'),
+    [Input('zone-A-btn','n_clicks'), Input('zone-B-btn','n_clicks'), Input('zone-C-btn','n_clicks'), Input('zone-D-btn','n_clicks')],
     prevent_initial_call=True
 )
-def go_to_nodes(n_track, n_a, n_b, n_c, n_d, zone_value):
-    # Determine which control triggered the callback
+def go_to_nodes(n_a, n_b, n_c, n_d):
+    """Handle clicks on the zone cards and navigate to the nodes page for the selected zone."""
+    # Determine which button triggered the callback
     ctx = callback_context
     if not ctx.triggered:
         raise PreventUpdate
     triggered = ctx.triggered[0]['prop_id'].split('.')[0]
 
-    # If user clicked the TRACK button, use the dropdown value
-    if triggered == 'go-to-vitals-btn':
-        if not zone_value:
-            return dash.no_update, 'Please choose a zone.', dash.no_update
-        return {'zone': zone_value}, '', '/nodes'
-
-    # Otherwise map the zone-card button to a zone value
+    # Map the zone-card button id to a zone value
     mapping = {
         'zone-A-btn': 'ZONE_A',
         'zone-B-btn': 'ZONE_B',
