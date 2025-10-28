@@ -20,7 +20,7 @@ def main():
     mqtt_port = int(os.getenv("MQTT_PORT", 8883))
     mqtt_username = os.getenv("MQTT_USERNAME")
     mqtt_password = os.getenv("MQTT_PASSWORD")
-    topic = "LOKI_2004"
+    topic = os.getenv("MQTT_TOPIC_1", "LOKI_2004")
     
     print(f"🧪 Testing Alert System - Publishing to {mqtt_host}:{mqtt_port}")
     print(f"📡 Topic: {topic}")

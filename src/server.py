@@ -27,14 +27,25 @@ mqtt_username = os.getenv("MQTT_USERNAME")
 mqtt_password = os.getenv("MQTT_PASSWORD")
 
 # MQTT topic for gas sensor data
-mqtt_topic = "LOKI_2004"
+mqtt_topic = os.getenv("MQTT_TOPIC_1", "LOKI_2004")
 
 if not all([host, port, mqtt_username, mqtt_password]):
     logging.error("Required MQTT environment variables not set")
     exit(1)
 
-# Create MQTT client with TLS support
-client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, "SensorDataServer")
+# Create MQTT client with TLS support (compatible with paho-mqtt v1.x and v2.x)
+try:
+    CallbackAPIVersion = getattr(mqtt, "CallbackAPIVersion", None)
+    if CallbackAPIVersion is not None:
+        # paho-mqtt v2.x
+        client = mqtt.Client(client_id="SensorDataServer", protocol=mqtt.MQTTv311,
+                             callback_api_version=CallbackAPIVersion.VERSION1)
+    else:
+        # paho-mqtt v1.x
+        client = mqtt.Client(client_id="SensorDataServer", protocol=mqtt.MQTTv311)
+except Exception as e:
+    logging.warning(f"Falling back to default MQTT client creation: {e}")
+    client = mqtt.Client()
 
 # Configure TLS/SSL
 context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
@@ -86,7 +97,7 @@ def parse_gas_sensor_data(payload):
 def parse_sensor_data(topic, payload):
     """Parse sensor data based on topic"""
     try:
-        if topic == "LOKI_2004":
+        if topic == mqtt_topic:
             parse_gas_sensor_data(payload)
         else:
             logging.warning(f"Unknown topic received: {topic}")
@@ -155,10 +166,7 @@ def run():
         logging.info("📊 Real-time gas monitoring active")
         logging.info("🔄 Data ready for dashboard display")
         logging.info("🛑 Press Ctrl+C to stop monitoring")
-        
-        # Start MQTT loop
-        # Start MQTT loop
-        client.loop_start()
+        # Start MQTT loop (use only one loop method; do not mix loop_start with loop_forever)
 
         # Helper to publish RFID scan events to topic 'rfid'
         def publish_rfid(station_id, tag_id, qos=1):
@@ -177,7 +185,6 @@ def run():
         if os.getenv('TEST_PUBLISH_SAMPLE_RFID') == '1':
             logging.info('TEST_PUBLISH_SAMPLE_RFID=1 set — publishing sample RFID message')
             publish_rfid('A1', 'TEST_TAG_001')
-
         # Keep original behavior (summary thread + running loop)
         client.loop_forever()
         

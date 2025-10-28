@@ -905,8 +905,8 @@ class MQTTClient:
         self.mqtt_username = os.getenv("MQTT_USERNAME")
         self.mqtt_password = os.getenv("MQTT_PASSWORD")
         
-        # MQTT Topics
-        self.gas_topic = "LOKI_2004"
+        # MQTT Topics (from env with default)
+        self.gas_topic = os.getenv("MQTT_TOPIC_1", "LOKI_2004")
         self.rfid_topic = "rfid"  # RFID checkpoint topic
     
     def on_connect(self, client, userdata, flags, rc):
@@ -977,8 +977,18 @@ class MQTTClient:
     
     def connect(self):
         try:
-            # Fix: Add callback_api_version parameter for newer paho-mqtt versions
-            self.client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION1)
+            # Create MQTT client compatible with paho v1.x and v2.x, force MQTT 3.1.1
+            CallbackAPIVersion = getattr(mqtt, 'CallbackAPIVersion', None)
+            if CallbackAPIVersion is not None:
+                # paho-mqtt v2.x path
+                self.client = mqtt.Client(
+                    client_id='MineArmourDash',
+                    protocol=mqtt.MQTTv311,
+                    callback_api_version=CallbackAPIVersion.VERSION1
+                )
+            else:
+                # paho-mqtt v1.x path
+                self.client = mqtt.Client(client_id='MineArmourDash', protocol=mqtt.MQTTv311)
             self.client.on_connect = self.on_connect
             self.client.on_message = self.on_message
             self.client.on_disconnect = self.on_disconnect
@@ -1401,7 +1411,7 @@ def vitals_layout():
                    style={'color': '#ffffff', 'font-weight': 'bold', 'fontSize': '3rem'}),
                 html.P([
                     html.I(className="fas fa-broadcast-tower me-2"),
-                    "MQTT Topic: LOKI_2004 | ",
+                    "MQTT Topic: " + os.getenv("MQTT_TOPIC_1", "LOKI_2004") + " | ",
                     html.I(className="fas fa-clock me-2"),
                     "Live Updates Every Second | ",
                     html.I(className="fas fa-microchip me-2"),
@@ -2979,7 +2989,7 @@ if __name__ == '__main__':
         print("🛡 Starting Mine Armour Multi-Sensor Dashboard...")
         print("📊 Dashboard will be available at: http://localhost:8050")
         print("🔄 Real-time updates every second")
-        print("📡 MQTT Topic: LOKI_2004 (Multi-Sensor Data)")
+        print(f"📡 MQTT Topic: {mqtt_client.gas_topic} (Multi-Sensor Data)")
         print("🔥 Gas Sensors: LPG, CH4, Propane, Butane, H2")
         print("❤ Health Sensors: Heart Rate, SpO2, GSR, Stress")
         print("🌡 Environment: Temperature, Humidity")
