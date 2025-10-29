@@ -667,6 +667,8 @@ class SensorDataManager:
         # Per-tag scan counters to support sequence-based checkpoint progression
         # Keyed by lower-case tag id. Used for special-case flows (e.g. c7761005 in Zone A)
         self._rfid_tag_scan_counts = {}
+        # Track last scan time for each tag to prevent duplicate rapid scans
+        self._last_scan_time = {}  # Format: {(tag_id, station_id): timestamp}
     
     def add_gas_data(self, data):
         """Add new sensor data point"""
@@ -795,6 +797,17 @@ class SensorDataManager:
             station_id = rfid_data.get('station_id', '')
             tag_id = rfid_data.get('tag_id', '')
             
+            # DEBOUNCING: Ignore duplicate scans within 3 seconds
+            scan_key = (tag_id, station_id)
+            if scan_key in self._last_scan_time:
+                time_since_last = (timestamp - self._last_scan_time[scan_key]).total_seconds()
+                if time_since_last < 3.0:  # 3 second debounce window
+                    logging.info(f"RFID scan ignored (debounce): {tag_id} at {station_id} (last scan {time_since_last:.1f}s ago)")
+                    return
+            
+            # Update last scan time
+            self._last_scan_time[scan_key] = timestamp
+            
             # Map station_id to node_id and checkpoint (you can customize this mapping)
             # Station format examples: A1, A2, B1, B2, etc.
             zone = station_id[0] if station_id else ''  # Extract zone letter (A, B, C)
@@ -847,10 +860,12 @@ class SensorDataManager:
                 tag_lc = ''
 
             if tag_lc == 'c7761005' and zone == 'A':
-                # Increment the per-tag counter
+                # Increment the per-tag counter for each unique scan
                 cnt = self._rfid_tag_scan_counts.get(tag_lc, 0) + 1
                 self._rfid_tag_scan_counts[tag_lc] = cnt
+                
                 # Map the first four scans to the four checkpoints in order
+                # Each scan advances to the next checkpoint regardless of station
                 if cnt == 1:
                     checkpoint_id = 'Main Gate Checkpoint'
                 elif cnt == 2:
@@ -860,8 +875,9 @@ class SensorDataManager:
                 elif cnt == 4:
                     checkpoint_id = 'Workshop Checkpoint'
                 else:
-                    # For subsequent scans beyond four, fall back to the normal station mapping
+                    # After 4 scans, use station mapping
                     checkpoint_id = checkpoint_mapping.get(station_id, f'Station {station_id}')
+                
                 # Force the node to C7761005 so progress is stored under that person's node
                 node_id = 'C7761005'
             
@@ -889,6 +905,28 @@ class SensorDataManager:
                 self.data['rfid_checkpoints']['checkpoint_progress'][node_id][checkpoint_id] = timestamp
             
             logging.info(f"RFID checkpoint updated: Station={station_id}, Tag={tag_id}, Node={node_id}, Checkpoint={checkpoint_id}")
+    
+    def reset_checkpoint_progress(self, node_id=None, tag_id=None):
+        """Reset checkpoint progress for a specific node or tag"""
+        with self.lock:
+            if tag_id:
+                # Reset tag scan counter
+                tag_lc = tag_id.lower() if isinstance(tag_id, str) else ''
+                if tag_lc in self._rfid_tag_scan_counts:
+                    del self._rfid_tag_scan_counts[tag_lc]
+                    logging.info(f"Reset scan counter for tag {tag_id}")
+            
+            if node_id:
+                # Reset checkpoint progress for node
+                if node_id in self.data['rfid_checkpoints']['checkpoint_progress']:
+                    del self.data['rfid_checkpoints']['checkpoint_progress'][node_id]
+                    logging.info(f"Reset checkpoint progress for node {node_id}")
+            
+            if not node_id and not tag_id:
+                # Reset everything
+                self._rfid_tag_scan_counts.clear()
+                self.data['rfid_checkpoints']['checkpoint_progress'].clear()
+                logging.info("Reset all checkpoint progress")
     
     def get_rfid_data(self):
         """Get RFID checkpoint data"""
@@ -935,7 +973,10 @@ class MQTTClient:
             # Subscribe to gas sensor topic (primary source)
             client.subscribe(self.gas_topic)
             logging.info(f"Subscribed to {self.gas_topic}")
-            # RFID subscription intentionally disabled; we derive RFID-like events from LOKI_2004 when present
+            # Subscribe to RFID topics to receive checkpoint scans
+            client.subscribe("rfid")
+            client.subscribe("rfid/#")
+            logging.info("Subscribed to RFID topics: rfid and rfid/#")
         else:
             logging.error(f"Failed to connect to MQTT broker: {rc}")
     
@@ -1271,7 +1312,8 @@ app.layout = html.Div([
     dcc.Store(id='selected-node-store', storage_type='session'),
     dcc.Store(id='auth-store', storage_type='session'),
     # Global interval so alerts monitoring runs even on the landing page
-    dcc.Interval(id='global-interval', interval=1000, n_intervals=0),
+    # Reduced to 3000ms (3 seconds) to prevent UI "freaking out" from too many updates
+    dcc.Interval(id='global-interval', interval=3000, n_intervals=0),
     html.Div(id='page-content')
 ])
 
@@ -1903,7 +1945,7 @@ def vitals_layout():
     # Auto-refresh component
     dcc.Interval(
         id='interval-component',
-        interval=1000,  # Update every second
+        interval=2000,  # Update every 2 seconds (reduced from 1s to prevent UI overload)
         n_intervals=0
     ),
     
