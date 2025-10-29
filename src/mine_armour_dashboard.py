@@ -849,35 +849,26 @@ class SensorDataManager:
             # Default checkpoint id from mapping
             checkpoint_id = checkpoint_mapping.get(station_id, f'Station {station_id}')
 
-            # Special-case: for tag C7761005 (case-insensitive) in Zone A, enforce
-            # a simple two-step progression regardless of which physical station
-            # reported the scan. This implements the user's requirement:
-            #   - First scan -> Main Gate Checkpoint
-            #   - Second scan -> Weighbridge Checkpoint
+            # Special-case: for tag C7761005 (case-insensitive), advance the
+            # checkpoint progress sequentially on every unique scan. Each scan
+            # advances to the next configured checkpoint for that node (cycles).
             try:
                 tag_lc = tag_id.lower() if isinstance(tag_id, str) else ''
             except Exception:
                 tag_lc = ''
 
-            if tag_lc == 'c7761005' and zone == 'A':
-                # Increment the per-tag counter for each unique scan
+            if tag_lc == 'c7761005':
+                # Increment the per-tag counter (absolute count) for each unique scan
                 cnt = self._rfid_tag_scan_counts.get(tag_lc, 0) + 1
                 self._rfid_tag_scan_counts[tag_lc] = cnt
-                
-                # Map the first four scans to the four checkpoints in order
-                # Each scan advances to the next checkpoint regardless of station
-                if cnt == 1:
-                    checkpoint_id = 'Main Gate Checkpoint'
-                elif cnt == 2:
-                    checkpoint_id = 'Weighbridge Checkpoint'
-                elif cnt == 3:
-                    checkpoint_id = 'Fuel Station Checkpoint'
-                elif cnt == 4:
-                    checkpoint_id = 'Workshop Checkpoint'
-                else:
-                    # After 4 scans, use station mapping
-                    checkpoint_id = checkpoint_mapping.get(station_id, f'Station {station_id}')
-                
+
+                # Get the ordered checkpoint list for this node (fallback to mapping)
+                node_checkpoints = self.data['rfid_checkpoints']['active_checkpoints'].get('C7761005',
+                                                                                         ['Main Gate Checkpoint', 'Weighbridge Checkpoint', 'Fuel Station Checkpoint', 'Workshop Checkpoint'])
+                # Cycle through checkpoints on each scan
+                idx = (cnt - 1) % len(node_checkpoints)
+                checkpoint_id = node_checkpoints[idx]
+
                 # Force the node to C7761005 so progress is stored under that person's node
                 node_id = 'C7761005'
             
