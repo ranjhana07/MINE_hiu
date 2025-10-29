@@ -1,0 +1,125 @@
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                  RFID CHECKPOINT SYSTEM - OVERVIEW                  │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│  MQTT MESSAGE FORMAT                                                │
+├─────────────────────────────────────────────────────────────────────┤
+│  Topic: rfid                                                        │
+│  Payload: {                                                         │
+│    "station_id": "A1",                                              │
+│    "tag_id": "93BA302D",                                            │
+│    "name": "TRISHALA"                                               │
+│  }                                                                  │
+└─────────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  STATION TO NODE MAPPING                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│  Station A1 (Zone A) → NODE 93BA302D (TRISHALA)                    │
+└─────────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  ENHANCED TAG DETECTION                                             │
+├─────────────────────────────────────────────────────────────────────┤
+│  Tag 93BA302D detected → Use sequential progression logic           │
+│  (Same logic as C7761005/SUSHMA)                                    │
+└─────────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  CHECKPOINT PROGRESSION CYCLE                                       │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  FORWARD PHASE (Scans 1-4):                                        │
+│  ┌──────────────────────────────────────────────────────────────┐ │
+│  │  Scan 1:  [✓ Main Gate]                                      │ │
+│  │            ↓                                                  │ │
+│  │  Scan 2:  [✓ Main Gate] [✓ Weighbridge]                      │ │
+│  │            ↓                                                  │ │
+│  │  Scan 3:  [✓ Main Gate] [✓ Weighbridge] [✓ Fuel Station]    │ │
+│  │            ↓                                                  │ │
+│  │  Scan 4:  [✓ Main Gate] [✓ Weighbridge] [✓ Fuel Station]    │ │
+│  │           [✓ Workshop] ← ALL CHECKPOINTS MARKED               │ │
+│  └──────────────────────────────────────────────────────────────┘ │
+│                                                                     │
+│  REVERSE PHASE (Scans 5-8):                                        │
+│  ┌──────────────────────────────────────────────────────────────┐ │
+│  │  Scan 5:  [✓ Main Gate] [✓ Weighbridge] [✓ Fuel Station]    │ │
+│  │            ↑ (Workshop unmarked)                              │ │
+│  │  Scan 6:  [✓ Main Gate] [✓ Weighbridge]                      │ │
+│  │            ↑ (Fuel Station unmarked)                          │ │
+│  │  Scan 7:  [✓ Main Gate]                                      │ │
+│  │            ↑ (Weighbridge unmarked)                           │ │
+│  │  Scan 8:  [ ] ALL EMPTY                                       │ │
+│  │            ↑ (Main Gate unmarked) → CYCLE RESTARTS            │ │
+│  └──────────────────────────────────────────────────────────────┘ │
+│                                                                     │
+│  Then cycle repeats: Scan 9 = Scan 1, Scan 10 = Scan 2, etc.      │
+└─────────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  DASHBOARD DISPLAY                                                  │
+├─────────────────────────────────────────────────────────────────────┤
+│  Zone A → NODE 93BA302D - TRISHALA                                 │
+│                                                                     │
+│  RFID Checkpoint Progress:                                         │
+│  ┌──────────────────────────────────────────────────────────────┐ │
+│  │  ✓ Main Gate Checkpoint                                      │ │
+│  │  ✓ Weighbridge Checkpoint                                    │ │
+│  │  ✓ Fuel Station Checkpoint                                   │ │
+│  │  □ Workshop Checkpoint                                        │ │
+│  └──────────────────────────────────────────────────────────────┘ │
+│                                                                     │
+│  Latest Scan:                                                       │
+│  Tag: 93BA302D | Station: A1 | Name: TRISHALA                      │
+│  Time: 2025-10-30 14:35:42                                         │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│  DEBOUNCING                                                         │
+├─────────────────────────────────────────────────────────────────────┤
+│  Scans within 3 seconds → IGNORED (prevents double-scanning)       │
+│  Recommended interval: ≥ 4 seconds between scans                    │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│  BOTH ENHANCED TAGS COMPARISON                                      │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ┌────────────────────────┬────────────────────────┐               │
+│  │  C7761005 (SUSHMA)     │  93BA302D (TRISHALA)   │               │
+│  ├────────────────────────┼────────────────────────┤               │
+│  │  Station: A1           │  Station: A1           │               │
+│  │  Zone: A               │  Zone: A               │               │
+│  │  Checkpoints: 4        │  Checkpoints: 4        │               │
+│  │  Cycle: 8 scans        │  Cycle: 8 scans        │               │
+│  │  Logic: Sequential     │  Logic: Sequential     │               │
+│  └────────────────────────┴────────────────────────┘               │
+│                                                                     │
+│  Both use IDENTICAL checkpoint progression logic!                   │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│  TESTING WORKFLOW                                                   │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  1. Verify Config:    python verify_rfid_config.py                 │
+│                       ✅ Configuration verified!                    │
+│                                                                     │
+│  2. Local Test:       python test_rfid_trishala.py                 │
+│                       → Console shows 8 scans + progress            │
+│                                                                     │
+│  3. MQTT Publish:     python publish_rfid_trishala.py              │
+│                       → Sends 8 real MQTT messages                  │
+│                                                                     │
+│  4. View Dashboard:   http://localhost:8050                         │
+│                       → Select Zone A → NODE 93BA302D               │
+│                       → Watch live checkpoint progression           │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```

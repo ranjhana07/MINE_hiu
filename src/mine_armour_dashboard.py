@@ -856,7 +856,7 @@ class SensorDataManager:
             # Whether we've already handled marking/unmarking for this special-case
             skip_auto_mark = False
 
-            # Special-case: for tag C7761005 (case-insensitive), advance the
+            # Special-case: for tag C7761005 and 93BA302D (case-insensitive), advance the
             # checkpoint progress sequentially on every unique scan. Each scan
             # advances to the next configured checkpoint for that node (cycles).
             try:
@@ -864,14 +864,17 @@ class SensorDataManager:
             except Exception:
                 tag_lc = ''
 
-            if tag_lc == 'c7761005':
+            if tag_lc in ['c7761005', '93ba302d']:
+                # Determine the target node ID based on tag
+                target_node = 'C7761005' if tag_lc == 'c7761005' else '93BA302D'
+                
                 # Increment the per-tag counter (absolute count) for each unique scan
                 cnt = self._rfid_tag_scan_counts.get(tag_lc, 0) + 1
                 self._rfid_tag_scan_counts[tag_lc] = cnt
 
                 # Get ordered checkpoint list for this node
                 node_checkpoints = self.data['rfid_checkpoints']['active_checkpoints'].get(
-                    'C7761005',
+                    target_node,
                     ['Main Gate Checkpoint', 'Weighbridge Checkpoint', 'Fuel Station Checkpoint', 'Workshop Checkpoint']
                 )
                 n = len(node_checkpoints)
@@ -897,16 +900,16 @@ class SensorDataManager:
                 if pos <= n:
                     # Forward pass: mark checkpoint at index pos-1
                     idx = pos - 1
-                    _mark('C7761005', idx)
+                    _mark(target_node, idx)
                     checkpoint_id = node_checkpoints[idx]
                 else:
                     # Reverse pass: pos in [n+1 .. 2n] -> unmark index = 2n - pos
                     idx_un = (2 * n) - pos
-                    _unmark_idx('C7761005', idx_un)
+                    _unmark_idx(target_node, idx_un)
                     checkpoint_id = node_checkpoints[idx_un]
 
-                # Force the node to C7761005 so progress is stored under that person's node
-                node_id = 'C7761005'
+                # Force the node to the target node so progress is stored under that person's node
+                node_id = target_node
 
                 # Special-case: we handled marking/unmarking manually; prevent the
                 # generic automatic mark below from overriding it.
