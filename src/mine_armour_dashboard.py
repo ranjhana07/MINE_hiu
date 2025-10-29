@@ -669,6 +669,10 @@ class SensorDataManager:
         self._rfid_tag_scan_counts = {}
         # Track last scan time for each tag to prevent duplicate rapid scans
         self._last_scan_time = {}  # Format: {(tag_id, station_id): timestamp}
+        # Track last checkpoint index seen per tag (to detect wrap-around)
+        self._rfid_tag_last_index = {}
+        # Track last detected direction per tag ('forward' or 'reverse')
+        self._rfid_tag_direction = {}
     
     def add_gas_data(self, data):
         """Add new sensor data point"""
@@ -849,6 +853,9 @@ class SensorDataManager:
             # Default checkpoint id from mapping
             checkpoint_id = checkpoint_mapping.get(station_id, f'Station {station_id}')
 
+            # Whether we've already handled marking/unmarking for this special-case
+            skip_auto_mark = False
+
             # Special-case: for tag C7761005 (case-insensitive), advance the
             # checkpoint progress sequentially on every unique scan. Each scan
             # advances to the next configured checkpoint for that node (cycles).
@@ -862,15 +869,48 @@ class SensorDataManager:
                 cnt = self._rfid_tag_scan_counts.get(tag_lc, 0) + 1
                 self._rfid_tag_scan_counts[tag_lc] = cnt
 
-                # Get the ordered checkpoint list for this node (fallback to mapping)
-                node_checkpoints = self.data['rfid_checkpoints']['active_checkpoints'].get('C7761005',
-                                                                                         ['Main Gate Checkpoint', 'Weighbridge Checkpoint', 'Fuel Station Checkpoint', 'Workshop Checkpoint'])
-                # Cycle through checkpoints on each scan
-                idx = (cnt - 1) % len(node_checkpoints)
-                checkpoint_id = node_checkpoints[idx]
+                # Get ordered checkpoint list for this node
+                node_checkpoints = self.data['rfid_checkpoints']['active_checkpoints'].get(
+                    'C7761005',
+                    ['Main Gate Checkpoint', 'Weighbridge Checkpoint', 'Fuel Station Checkpoint', 'Workshop Checkpoint']
+                )
+                n = len(node_checkpoints)
+
+                # Compute position in a forward-then-reverse cycle of length 2*n
+                pos = ((cnt - 1) % (2 * n)) + 1
+
+                # Helper to mark/unmark
+                def _mark(node, idx_mark):
+                    chk = node_checkpoints[idx_mark]
+                    if node not in self.data['rfid_checkpoints']['checkpoint_progress']:
+                        self.data['rfid_checkpoints']['checkpoint_progress'][node] = {}
+                    self.data['rfid_checkpoints']['checkpoint_progress'][node][chk] = timestamp
+
+                def _unmark_idx(node, idx_un):
+                    chk = node_checkpoints[idx_un]
+                    try:
+                        if node in self.data['rfid_checkpoints']['checkpoint_progress'] and chk in self.data['rfid_checkpoints']['checkpoint_progress'][node]:
+                            del self.data['rfid_checkpoints']['checkpoint_progress'][node][chk]
+                    except Exception:
+                        logging.exception("Error unmarking checkpoint")
+
+                if pos <= n:
+                    # Forward pass: mark checkpoint at index pos-1
+                    idx = pos - 1
+                    _mark('C7761005', idx)
+                    checkpoint_id = node_checkpoints[idx]
+                else:
+                    # Reverse pass: pos in [n+1 .. 2n] -> unmark index = 2n - pos
+                    idx_un = (2 * n) - pos
+                    _unmark_idx('C7761005', idx_un)
+                    checkpoint_id = node_checkpoints[idx_un]
 
                 # Force the node to C7761005 so progress is stored under that person's node
                 node_id = 'C7761005'
+
+                # Special-case: we handled marking/unmarking manually; prevent the
+                # generic automatic mark below from overriding it.
+                skip_auto_mark = True
             
             # Store the scan
             self.data['rfid_checkpoints']['timestamps'].append(timestamp)
@@ -888,12 +928,12 @@ class SensorDataManager:
             if 'name' in rfid_data:
                 self.data['rfid_checkpoints']['latest_name'] = rfid_data.get('name')
             
-            # Update checkpoint progress for specific nodes
-            if node_id and checkpoint_id:
-                if node_id not in self.data['rfid_checkpoints']['checkpoint_progress']:
-                    self.data['rfid_checkpoints']['checkpoint_progress'][node_id] = {}
-                
-                self.data['rfid_checkpoints']['checkpoint_progress'][node_id][checkpoint_id] = timestamp
+            # Update checkpoint progress for specific nodes (skip if special-case handled it)
+            if not skip_auto_mark:
+                if node_id and checkpoint_id:
+                    if node_id not in self.data['rfid_checkpoints']['checkpoint_progress']:
+                        self.data['rfid_checkpoints']['checkpoint_progress'][node_id] = {}
+                    self.data['rfid_checkpoints']['checkpoint_progress'][node_id][checkpoint_id] = timestamp
             
             logging.info(f"RFID checkpoint updated: Station={station_id}, Tag={tag_id}, Node={node_id}, Checkpoint={checkpoint_id}")
     
@@ -1301,6 +1341,7 @@ app.layout = html.Div([
     dcc.Store(id='alerts-store'),
     dcc.Store(id='last-hr-store'),
     dcc.Store(id='selected-node-store', storage_type='session'),
+    dcc.Store(id='checkpoint-reset-store', storage_type='session'),
     dcc.Store(id='auth-store', storage_type='session'),
     # Global interval so alerts monitoring runs even on the landing page
     # Reduced to 3000ms (3 seconds) to prevent UI "freaking out" from too many updates
@@ -2697,6 +2738,25 @@ def update_selected_node_display(node_data):
 )
 def update_rfid_checkpoint_display(n, node_data):
     try:
+        # If the callback was triggered by selecting a node, reset checkpoint
+        # progress for that node so the UI shows unscanned (red) states on load.
+        ctx = callback_context
+        if ctx.triggered and ctx.triggered[0]['prop_id'].startswith('selected-node-store'):
+            try:
+                sel_node = node_data.get('node') if node_data and 'node' in node_data else None
+                if sel_node:
+                    logging.info(f"Resetting checkpoint progress for node view: {sel_node}")
+                    # Reset checkpoint progress for this node
+                    data_manager.reset_checkpoint_progress(node_id=sel_node)
+                    # Also reset per-tag scan counter for tags that map to this node
+                    # (common case: tag id equals node id e.g. 'C7761005')
+                    try:
+                        data_manager.reset_checkpoint_progress(tag_id=sel_node)
+                    except Exception:
+                        pass
+            except Exception:
+                logging.exception("Error while resetting checkpoint progress on node select")
+
         if not node_data or 'node' not in node_data:
             # Always render the diagram for the four checkpoints, even if no node selected
             default_checkpoints = ['Main Gate Checkpoint', 'Weighbridge Checkpoint', 'Fuel Station Checkpoint', 'Workshop Checkpoint']
@@ -2907,6 +2967,36 @@ def update_rfid_checkpoint_display(n, node_data):
     except Exception as e:
         return [html.P(f"Error loading checkpoint data: {str(e)}", 
                       style={'color': '#ff4444', 'textAlign': 'center'})], "Error"
+
+
+# Reset checkpoint progress when the vitals page is loaded (or reloaded)
+@app.callback(
+    Output('checkpoint-reset-store','data'),
+    Input('url','pathname'),
+    State('selected-node-store','data')
+)
+def reset_checkpoints_on_page_load(pathname, node_data):
+    """Reset checkpoint progress for the selected node when the vitals URL is loaded.
+
+    This runs on initial page load (and when the pathname changes). It ensures the
+    checkpoint UI shows unscanned (red) checkpoints after a reload.
+    """
+    try:
+        if pathname and pathname.startswith('/vitals') and node_data and 'node' in node_data:
+            sel_node = node_data.get('node')
+            if sel_node:
+                logging.info(f"Page load: resetting checkpoint progress for node {sel_node}")
+                data_manager.reset_checkpoint_progress(node_id=sel_node)
+                # Also clear per-tag scan counter if tag equals node id
+                try:
+                    data_manager.reset_checkpoint_progress(tag_id=sel_node)
+                except Exception:
+                    pass
+    except Exception as e:
+        logging.error(f"Error resetting checkpoints on page load: {e}")
+
+    # No actual data needed in this store; return dash.no_update to avoid unnecessary writes
+    return dash.no_update
 
 
 # ---------------------------
