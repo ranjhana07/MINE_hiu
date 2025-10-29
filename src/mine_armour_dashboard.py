@@ -720,6 +720,20 @@ class SensorDataManager:
             self.data['gps_data']['alt'].append(alt)
             self.data['gps_data']['sat'].append(sat)
             
+            # Optional identity/zone metadata if present on the message
+            person_name = data.get('name') or data.get('person') or data.get('user')
+            station_id_msg = data.get('station_id')
+            zone_from_msg = data.get('zone')
+            # Derive a simple zone label from station id when available (e.g. A1 -> Zone A)
+            derived_zone = None
+            try:
+                if isinstance(station_id_msg, str) and station_id_msg:
+                    derived_zone = f"Zone {station_id_msg[0].upper()}"
+            except Exception:
+                derived_zone = None
+
+            zone_label = zone_from_msg or derived_zone
+
             # Update latest values with ALL sensor data
             self.data['gas_sensors']['latest'] = {
                 'LPG': lpg,
@@ -737,6 +751,8 @@ class SensorDataManager:
                 'lon': lon,
                 'alt': alt,
                 'sat': sat,
+                'name': person_name,
+                'zone': zone_label,
                 'timestamp': timestamp
             }
             
@@ -861,6 +877,9 @@ class SensorDataManager:
             
             self.data['rfid_checkpoints']['latest_tag'] = tag_id
             self.data['rfid_checkpoints']['latest_station'] = station_id
+            # Store latest seen name if provided by publisher (used for alert context)
+            if 'name' in rfid_data:
+                self.data['rfid_checkpoints']['latest_name'] = rfid_data.get('name')
             
             # Update checkpoint progress for specific nodes
             if node_id and checkpoint_id:
@@ -907,18 +926,16 @@ class MQTTClient:
         
         # MQTT Topics (from env with default)
         self.gas_topic = os.getenv("MQTT_TOPIC_1", "LOKI_2004")
-        self.rfid_topic = "rfid"  # RFID checkpoint topic
+        self.rfid_topic = "rfid"  # RFID checkpoint topic (subscription disabled by request)
     
     def on_connect(self, client, userdata, flags, rc):
         if rc == 0:
             self.connected = True
             logging.info("Connected to MQTT broker")
-            # Subscribe to gas sensor topic
+            # Subscribe to gas sensor topic (primary source)
             client.subscribe(self.gas_topic)
             logging.info(f"Subscribed to {self.gas_topic}")
-            # Subscribe to RFID checkpoint topic
-            client.subscribe(self.rfid_topic)
-            logging.info(f"Subscribed to {self.rfid_topic}")
+            # RFID subscription intentionally disabled; we derive RFID-like events from LOKI_2004 when present
         else:
             logging.error(f"Failed to connect to MQTT broker: {rc}")
     
@@ -1031,6 +1048,7 @@ app = dash.Dash(__name__, external_stylesheets=[
     "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"  # Icons
 ])
 app.title = "🛡 Mine Armour - Gas Sensor Dashboard"
+app.config.suppress_callback_exceptions = True
 
 # --- Lightweight helper HTTP endpoints for testing/resetting RFID counters
 # These run on the same Flask server that Dash uses and are intended for
@@ -1085,6 +1103,47 @@ def rfid_counters():
         return jsonify(data_manager._rfid_tag_scan_counts)
     except Exception as e:
         logging.error(f"Error returning rfid counters: {e}")
+        return ("Internal Error", 500)
+
+# Simple helper endpoint to simulate heart-rate messages for testing alerts
+# Example: GET /simulate_hr?hr=105&name=Test%20User&station=A1
+@app.server.route('/simulate_hr', methods=['GET'])
+def simulate_hr():
+    try:
+        hr_str = request.args.get('hr')
+        if hr_str is None:
+            return ("Missing hr query parameter", 400)
+        try:
+            hr = float(hr_str)
+        except ValueError:
+            return ("Invalid hr value", 400)
+
+        name = request.args.get('name') or 'Test User'
+        station = request.args.get('station') or 'A1'
+
+        payload = {
+            'heartRate': hr,
+            'spo2': 98,
+            'name': name,
+            'station_id': station,
+            'temperature': 26.7,
+            'humidity': 68.0,
+            'LPG': 0,
+            'CH4': 0,
+            'Propane': 0,
+            'Butane': 0,
+            'H2': 0,
+            'GSR': 0,
+            'stress': 0,
+            'lat': 0.0,
+            'lon': 0.0,
+            'alt': 0.0,
+            'sat': 0,
+        }
+        data_manager.add_gas_data(payload)
+        return ("OK", 200)
+    except Exception as e:
+        logging.error(f"Error in simulate_hr: {e}")
         return ("Internal Error", 500)
 
 # Custom CSS styling with darker red-black gradient theme
@@ -1211,6 +1270,8 @@ app.layout = html.Div([
     dcc.Store(id='last-hr-store'),
     dcc.Store(id='selected-node-store', storage_type='session'),
     dcc.Store(id='auth-store', storage_type='session'),
+    # Global interval so alerts monitoring runs even on the landing page
+    dcc.Interval(id='global-interval', interval=1000, n_intervals=0),
     html.Div(id='page-content')
 ])
 
@@ -2820,42 +2881,75 @@ def update_rfid_checkpoint_display(n, node_data):
 # ---------------------------
 @app.callback(
     Output('alerts-store', 'data', allow_duplicate=True),
-    [Input('interval-component', 'n_intervals'), Input('clear-alerts-btn', 'n_clicks')],
+    Input('global-interval', 'n_intervals'),
     [State('alerts-store', 'data'), State('chosen-zone-store', 'data'), State('selected-node-store', 'data')],
     prevent_initial_call=True
 )
-def monitor_alerts(n, clear_clicks, alerts_data, zone_data, node_data):
-    """Check latest heart rate and append alert when threshold exceeded (HR > 10).
-    Also clear alerts immediately when Clear Alerts button is pressed.
-    """
+def monitor_alerts(n, alerts_data, zone_data, node_data):
+    """Check latest heart rate and append alert when out of safe range (<20 or >80 BPM)."""
     try:
-        ctx = callback_context
-        # If clear button triggered, reset alerts immediately
-        if ctx.triggered and ctx.triggered[0]['prop_id'].startswith('clear-alerts-btn'):
-            return []
-
         if alerts_data is None:
             alerts = []
         else:
             alerts = list(alerts_data)
 
+        # Prefer heartRate from gas latest; fall back to last valid in health series
         latest = data_manager.get_gas_data().get('latest', {})
         hr = latest.get('heartRate', None)
+        if hr is None:
+            try:
+                health = data_manager.get_health_data()
+                if health and health.get('heartRate'):
+                    # pick last non-None
+                    for v in reversed(list(health['heartRate'])):
+                        if v is not None:
+                            hr = v
+                            break
+            except Exception:
+                pass
+
+        # Log evaluation context for diagnostics - ALWAYS log to see if callback is running
+        logging.info(f"Alert monitor running: HR={hr}, n={n}, num_alerts={len(alerts)}")
 
         # Determine zone and node for context
-        zone = zone_data.get('zone') if zone_data else 'Unknown'
+        zone = (latest.get('zone') or (zone_data.get('zone') if zone_data else None))
+        if not zone:
+            try:
+                rfid_ctx = data_manager.get_rfid_data()
+                station = rfid_ctx.get('latest_station')
+                if isinstance(station, str) and station:
+                    zone = f"Zone {station[0].upper()}"
+            except Exception:
+                zone = None
+        zone = zone or 'Unknown'
         node = node_data.get('node') if node_data else 'Unknown'
+        # Prefer user name from latest payload; fall back to last RFID 'latest_name'
+        user = latest.get('name') or latest.get('person')
+        if not user:
+            try:
+                rfid_ctx = data_manager.get_rfid_data()
+                user = rfid_ctx.get('latest_name') or 'Unknown'
+            except Exception:
+                user = 'Unknown'
 
-        # Only trigger when we have a numeric HR and above threshold
-        if hr is not None and isinstance(hr, (int, float)) and hr > 10:
+        # Only trigger when we have a numeric HR reading (> 0) and it's out of range per new thresholds
+        # Treat 0 or negative as "no reading" to avoid spurious alerts from missing sensors
+        if hr is not None and isinstance(hr, (int, float)) and hr > 0 and (hr < 20 or hr > 80):
+            if hr < 20:
+                issue = f"Low heart rate ({hr} BPM < 20)"
+            else:
+                issue = f"High heart rate ({hr} BPM > 80)"
+            
+            logging.info(f"🚨 Alert triggered: {issue} — User: {user}, Zone: {zone}, Node: {node}")
             # Avoid spamming duplicate alerts by ensuring latest alert timestamp differs
             now = datetime.now()
             alert_entry = {
                 'ts': now.isoformat(),
                 'type': 'HEART_RATE',
-                'message': f'High heart rate: {hr} BPM',
+                'message': issue,
                 'zone': zone,
-                'node': node
+                'node': node,
+                'user': user
             }
 
             # If last alert is identical in message and node within 5 seconds, skip
@@ -2873,6 +2967,18 @@ def monitor_alerts(n, clear_clicks, alerts_data, zone_data, node_data):
     except Exception as e:
         logging.error(f"Error in monitor_alerts: {e}")
         return dash.no_update
+
+
+# Dedicated clear for Alerts on vitals page to avoid cross-page Input dependency
+@app.callback(
+    Output('alerts-store', 'data', allow_duplicate=True),
+    Input('clear-alerts-btn', 'n_clicks'),
+    prevent_initial_call=True
+)
+def clear_vitals_alerts(n_clicks):
+    if n_clicks and n_clicks > 0:
+        return []
+    return dash.no_update
 
 
 @app.callback(
@@ -2902,8 +3008,9 @@ def render_alerts(alerts_data, clear_clicks):
             rows.append(html.Div([
                 html.Span(f"[{ts_fmt}] ", style={'color': '#ffcc00', 'fontWeight': '700'}),
                 html.Strong(a.get('message', ''), style={'color': '#ffffff'}),
-                html.Span(f" — Zone: {a.get('zone', 'Unknown')}", style={'color': '#ff8888', 'marginLeft': '8px'}),
-                html.Span(f" Node: {a.get('node', 'Unknown')}", style={'color': '#ffaaaa', 'marginLeft': '6px'})
+                html.Span(f" — User: {a.get('user', 'Unknown')}", style={'color': '#ffd1d1', 'marginLeft': '8px'}),
+                html.Span(f" • Zone: {a.get('zone', 'Unknown')}", style={'color': '#ff8888', 'marginLeft': '6px'}),
+                html.Span(f" • Node: {a.get('node', 'Unknown')}", style={'color': '#ffaaaa', 'marginLeft': '6px'})
             ], style={'padding': '6px 0', 'borderBottom': '1px solid rgba(255,255,255,0.03)'}))
 
         return rows
@@ -2931,7 +3038,9 @@ def render_landing_alerts(alerts_data, clear_clicks):
 
         # Build list of alert rows (most recent first, compact format for landing page)
         rows = []
-        for a in reversed(list(alerts_data))[-8:]:  # Show fewer alerts on landing page
+        # Take last 8 alerts and reverse them to show most recent first
+        recent_alerts = list(alerts_data)[-8:]
+        for a in reversed(recent_alerts):
             ts = a.get('ts')
             try:
                 ts_fmt = datetime.fromisoformat(ts).strftime('%H:%M:%S')
@@ -2942,8 +3051,10 @@ def render_landing_alerts(alerts_data, clear_clicks):
             rows.append(html.Div([
                 html.Div([
                     html.I(className="fas fa-exclamation-circle", style={'color': '#ff4444', 'marginRight': '8px'}),
+                    html.Strong(a.get('user', 'Unknown'), style={'color': '#ffd1d1'}),
+                    html.Span(" • ", style={'color': '#ffaaaa', 'margin': '0 6px'}),
                     html.Strong(f"{a.get('zone', 'Unknown')}", style={'color': '#ff8888'}),
-                    html.Span(f" - Node {a.get('node', 'Unknown')}", style={'color': '#ffaaaa'})
+                    html.Span(f" • Node {a.get('node', 'Unknown')}", style={'color': '#ffaaaa'})
                 ], style={'marginBottom': '4px'}),
                 html.Div([
                     html.Span(f"[{ts_fmt}] ", style={'color': '#ffcc00', 'fontSize': '0.85rem'}),
@@ -2960,7 +3071,8 @@ def render_landing_alerts(alerts_data, clear_clicks):
 
         return rows
     except Exception as e:
-        logging.error(f"Error rendering landing alerts: {e}")
+        import traceback
+        logging.error(f"Error rendering landing alerts: {e}\n{traceback.format_exc()}")
         return [html.P("Error loading alerts", style={'color': '#ff4444', 'textAlign': 'center'})]
 
 

@@ -48,7 +48,7 @@ The Mine Armour Dashboard now includes a comprehensive alerts system that displa
 ### 🔧 How It Works
 
 1. **Data Collection**: MQTT messages on topic `LOKI_2004` are monitored continuously
-2. **Threshold Check**: Heart rate values > 10 BPM trigger alerts
+2. **Threshold Check**: Heart rate outside the safe range (< 20 or > 80 BPM) triggers alerts
 3. **Context Addition**: Current zone and selected node are automatically included
 4. **Real-time Display**: Alerts appear immediately on both landing and vitals pages
 5. **Duplicate Prevention**: Same alerts are suppressed if within 5 seconds
@@ -62,7 +62,7 @@ Use the provided test script to simulate alerts:
 python src/test_alert_trigger.py
 ```
 
-This will publish test MQTT messages with heart rates of 15 and 22 BPM to trigger alerts.
+This will publish test MQTT messages with heart rates of 15 (low) and 105 (high) BPM to trigger alerts.
 
 ### 🎨 Visual Design
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Test script to simulate high heart rate data to trigger alerts in Mine Armour Dashboard
-This will publish MQTT messages with heart rate > 10 to test the alert system
+Test script to simulate out-of-range heart rate data to trigger alerts in Mine Armour Dashboard.
+This will publish MQTT messages with heart rate < 30 or > 90 to test the alert system
+and includes a sample user name to verify alert context.
 """
 
 import json
@@ -44,10 +45,10 @@ def main():
         client.loop_start()
         time.sleep(2)  # Wait for connection
         
-        # Test data with high heart rate to trigger alert
+        # Test data with out-of-range heart rate to trigger alerts
         test_data_samples = [
             {
-                'heartRate': 15,  # Above threshold of 10
+                'heartRate': 20,  # Below safe range (<30)
                 'spo2': 98,
                 'temperature': 36.5,
                 'humidity': 45.0,
@@ -61,10 +62,11 @@ def main():
                 'lat': 28.6139,
                 'lon': 77.2090,
                 'alt': 216.0,
-                'sat': 8
+                'sat': 8,
+                'name': 'Test User'
             },
             {
-                'heartRate': 22,  # Even higher to trigger another alert
+                'heartRate': 105,  # Above safe range (>90)
                 'spo2': 96,
                 'temperature': 37.2,
                 'humidity': 48.0,
@@ -78,10 +80,11 @@ def main():
                 'lat': 28.6140,
                 'lon': 77.2092,
                 'alt': 218.0,
-                'sat': 9
+                'sat': 9,
+                'name': 'Test User'
             },
             {
-                'heartRate': 8,   # Below threshold - should not trigger alert
+                'heartRate': 65,   # Within safe range (no alert)
                 'spo2': 99,
                 'temperature': 36.8,
                 'humidity': 44.0,
@@ -95,7 +98,8 @@ def main():
                 'lat': 28.6141,
                 'lon': 77.2094,
                 'alt': 220.0,
-                'sat': 10
+                'sat': 10,
+                'name': 'Test User'
             }
         ]
         
@@ -104,11 +108,11 @@ def main():
         for i, data in enumerate(test_data_samples, 1):
             json_data = json.dumps(data)
             result = client.publish(topic, json_data)
-            
-            if data['heartRate'] > 10:
-                print(f"📊 Sample {i}: Heart Rate = {data['heartRate']} BPM (SHOULD TRIGGER ALERT) ⚠️")
+            hr = data.get('heartRate')
+            if hr is not None and (hr < 30 or hr > 90):
+                print(f"📊 Sample {i}: Heart Rate = {hr} BPM (SHOULD TRIGGER ALERT) ⚠️")
             else:
-                print(f"📊 Sample {i}: Heart Rate = {data['heartRate']} BPM (Normal - no alert)")
+                print(f"📊 Sample {i}: Heart Rate = {hr} BPM (Normal - no alert)")
             
             print(f"   Published: {json_data}")
             print(f"   Result: {result}")
@@ -119,9 +123,9 @@ def main():
         print("\n✅ Test data published successfully!")
         print("🔍 Check the dashboard at http://localhost:8050 for alerts")
         print("📍 Go to: Zone selection → Select node → View vitals dashboard")
-        print("🚨 Alerts should appear showing:")
-        print("   - High heart rate: 15 BPM — Zone: [selected zone] Node: [selected node]")
-        print("   - High heart rate: 22 BPM — Zone: [selected zone] Node: [selected node]")
+        print("🚨 Alerts should appear showing user name (Test User) and the issue:")
+        print("   - Low heart rate: 20 BPM — Zone/Node per selection")
+        print("   - High heart rate: 105 BPM — Zone/Node per selection")
         
     except Exception as e:
         print(f"❌ Error: {e}")
