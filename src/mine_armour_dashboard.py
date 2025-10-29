@@ -1356,72 +1356,120 @@ app.layout = html.Div([
 # Page: Zone Selection
 # ---------------------------
 def zone_select_layout():
-    # Full screen layout with a 2x2 grid of zone cards on the left and alerts on the right
+    # Side-by-side layout: Zone selection on LEFT, Alerts on RIGHT - both boxes equal
     return html.Div([
+        # Container with two equal boxes side by side
         html.Div([
-            # Left side - 2x2 grid zone selection
+            # Left Box - MINE ARMOUR Zone Selection
             html.Div([
-                html.Div([
-                    html.H1("MINE ARMOUR", className='landing-title'),
-                    html.Div("Protecting Miners Preserving Lives", className='landing-subtext', style={'fontSize':'0.95rem','marginTop':'-18px','marginBottom':'10px','letterSpacing':'.8px','color':'#ffcccc','fontWeight':'600'}),
-                    # 2x2 Grid of Zone Cards
-                    html.Div([
-                        dbc.Row([
-                            dbc.Col(dbc.Card([
-                                dbc.CardBody([
-                        html.H3("Zone A", style={'color':'#fff','fontWeight':'700'}),
-                                    dbc.Button("ENTER Zone A", id='zone-A-btn', color='danger', className='mt-2', n_clicks=0)
-                                ])
-                            ], style=card_style), width=6),
-                            dbc.Col(dbc.Card([
-                                dbc.CardBody([
-                        html.H3("Zone B", style={'color':'#fff','fontWeight':'700'}),
-                                    dbc.Button("ENTER Zone B", id='zone-B-btn', color='danger', className='mt-2', n_clicks=0)
-                                ])
-                            ], style=card_style), width=6)
-                        ], className='mb-3'),
-                        dbc.Row([
-                            dbc.Col(dbc.Card([
-                                dbc.CardBody([
-                        html.H3("Zone C", style={'color':'#fff','fontWeight':'700'}),
-                                    dbc.Button("ENTER Zone C", id='zone-C-btn', color='danger', className='mt-2', n_clicks=0)
-                                ])
-                            ], style=card_style), width=6),
-                            dbc.Col(dbc.Card([
-                                dbc.CardBody([
-                        html.H3("Zone D", style={'color':'#fff','fontWeight':'700'}),
-                                    dbc.Button("ENTER Zone D", id='zone-D-btn', color='danger', className='mt-2', n_clicks=0)
-                                ])
-                            ], style=card_style), width=6)
+                html.H1("MINE ARMOUR", style={
+                    'color': '#ffffff',
+                    'fontSize': '2.5rem',
+                    'fontWeight': '800',
+                    'textAlign': 'center',
+                    'marginBottom': '8px',
+                    'letterSpacing': '1px',
+                    'textShadow': '0 0 18px rgba(255,60,60,0.55)'
+                }),
+                html.Div("Protecting Miners Preserving Lives", style={
+                    'fontSize': '0.85rem',
+                    'textAlign': 'center',
+                    'marginBottom': '25px',
+                    'letterSpacing': '.8px',
+                    'color': '#ffcccc',
+                    'fontWeight': '600'
+                }),
+                # 2x2 Grid of Zone Cards
+                dbc.Row([
+                    dbc.Col(dbc.Card([
+                        dbc.CardBody([
+                            html.H3("Zone A", style={'color':'#fff','fontWeight':'700','marginBottom':'10px','textAlign':'center'}),
+                            dbc.Button("ENTER Zone A", id='zone-A-btn', color='danger', n_clicks=0, style={'width':'100%','fontWeight':'600'})
                         ])
-                    ], style={'width':'100%','marginTop':'18px'}),
-                    html.Div(id='zone-select-msg', className='landing-subtext')
-                ], className='landing-card')
-            ], style={'flex': '1', 'display': 'flex', 'alignItems': 'center', 'justifyContent': 'center', 'padding': '40px'}),
+                    ], style=card_style), width=6),
+                    dbc.Col(dbc.Card([
+                        dbc.CardBody([
+                            html.H3("Zone B", style={'color':'#fff','fontWeight':'700','marginBottom':'10px','textAlign':'center'}),
+                            dbc.Button("ENTER Zone B", id='zone-B-btn', color='danger', n_clicks=0, style={'width':'100%','fontWeight':'600'})
+                        ])
+                    ], style=card_style), width=6)
+                ], className='mb-3'),
+                dbc.Row([
+                    dbc.Col(dbc.Card([
+                        dbc.CardBody([
+                            html.H3("Zone C", style={'color':'#fff','fontWeight':'700','marginBottom':'10px','textAlign':'center'}),
+                            dbc.Button("ENTER Zone C", id='zone-C-btn', color='danger', n_clicks=0, style={'width':'100%','fontWeight':'600'})
+                        ])
+                    ], style=card_style), width=6),
+                    dbc.Col(dbc.Card([
+                        dbc.CardBody([
+                            html.H3("Zone D", style={'color':'#fff','fontWeight':'700','marginBottom':'10px','textAlign':'center'}),
+                            dbc.Button("ENTER Zone D", id='zone-D-btn', color='danger', n_clicks=0, style={'width':'100%','fontWeight':'600'})
+                        ])
+                    ], style=card_style), width=6)
+                ]),
+                html.Div(id='zone-select-msg', style={'textAlign':'center','marginTop':'15px','color':'#ffb3b3','fontSize':'0.75rem'})
+            ], style={
+                'background': 'linear-gradient(145deg, #1A0000 0%, #2D0000 55%, #1A0000 100%)',
+                'border': '2px solid #800000',
+                'borderRadius': '20px',
+                'padding': '40px 30px',
+                'boxShadow': '0 10px 35px rgba(128,0,0,0.55), 0 4px 12px rgba(0,0,0,0.6)',
+                'width': '550px',
+                'height': '580px'
+            }),
 
-            # Right side - Alerts panel
+            # Right Box - Live Alerts (EXACT same size as left box)
             html.Div([
-                html.Div([
-                    html.H3([
-                        "Live Alerts"
-                    ], style={'color': '#ffffff', 'marginBottom': '20px', 'textAlign': 'center'}),
-                    html.Div(id='landing-alerts-list', children=[
-                        html.P("No active alerts", style={'color': '#99aab5', 'textAlign': 'center', 'fontStyle': 'italic'})
-                    ], style={'minHeight': '200px', 'maxHeight': '400px', 'overflowY': 'auto'}),
-                    html.Div([
-                        dbc.Button("Clear All Alerts", id='landing-clear-alerts-btn', color='danger', size='sm', style={'width': '100%'})
-                    ], style={'marginTop': '15px'})
+                html.H1("Live Alerts", style={
+                    'color': '#ffffff',
+                    'fontSize': '2.5rem',
+                    'fontWeight': '800',
+                    'textAlign': 'center',
+                    'marginBottom': '8px',
+                    'letterSpacing': '1px',
+                    'textShadow': '0 0 18px rgba(255,60,60,0.55)'
+                }),
+                html.Div("Real-time Safety Monitoring", style={
+                    'fontSize': '0.85rem',
+                    'textAlign': 'center',
+                    'marginBottom': '25px',
+                    'letterSpacing': '.8px',
+                    'color': '#ffcccc',
+                    'fontWeight': '600'
+                }),
+                html.Div(id='landing-alerts-list', children=[
+                    html.P("No active alerts", style={'color': '#99aab5', 'textAlign': 'center', 'fontStyle': 'italic', 'marginTop': '80px', 'fontSize': '1.1rem'})
                 ], style={
-                    'background': 'linear-gradient(145deg, #1A0000 0%, #2D0000 55%, #1A0000 100%)',
-                    'border': '1px solid #800000',
-                    'borderRadius': '15px',
-                    'padding': '25px',
-                    'boxShadow': '0 8px 25px rgba(128,0,0,0.4)',
-                    'minHeight': '300px'
-                })
-            ], style={'width': '350px', 'padding': '40px 40px 40px 20px'})
+                    'minHeight': '320px',
+                    'maxHeight': '320px',
+                    'overflowY': 'auto',
+                    'paddingRight': '10px',
+                    'marginBottom': '18px',
+                    'flex': '1'
+                }),
+                dbc.Button("Clear All Alerts", id='landing-clear-alerts-btn', color='danger', size='lg', 
+                          style={'width': '100%', 'fontWeight': '700', 'letterSpacing': '1px', 'padding': '12px'})
+            ], style={
+                'background': 'linear-gradient(145deg, #1A0000 0%, #2D0000 55%, #1A0000 100%)',
+                'border': '2px solid #800000',
+                'borderRadius': '20px',
+                'padding': '40px 30px',
+                'boxShadow': '0 10px 35px rgba(128,0,0,0.55), 0 4px 12px rgba(0,0,0,0.6)',
+                'width': '550px',
+                'height': '580px',
+                'display': 'flex',
+                'flexDirection': 'column'
+            })
 
-        ], style={'display': 'flex', 'minHeight': '100vh', 'alignItems': 'stretch'})
+        ], style={
+            'display': 'flex',
+            'gap': '40px',
+            'alignItems': 'center',
+            'justifyContent': 'center',
+            'minHeight': '100vh',
+            'padding': '40px'
+        })
     ])
 
 # ---------------------------
