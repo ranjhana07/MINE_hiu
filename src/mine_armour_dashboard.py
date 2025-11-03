@@ -669,6 +669,8 @@ class SensorDataManager:
         self._rfid_tag_scan_counts = {}
         # Track last scan time for each tag to prevent duplicate rapid scans
         self._last_scan_time = {}  # Format: {(tag_id, station_id): timestamp}
+        # Global per-tag debounce to avoid rapid cycling even across stations
+        self._last_tag_time = {}  # Format: {tag_id: timestamp}
         # Track last checkpoint index seen per tag (to detect wrap-around)
         self._rfid_tag_last_index = {}
         # Track last detected direction per tag ('forward' or 'reverse')
@@ -800,17 +802,32 @@ class SensorDataManager:
             # Extract data from new RFID format: {"station_id": "A1", "tag_id": "TAG123"}
             station_id = rfid_data.get('station_id', '')
             tag_id = rfid_data.get('tag_id', '')
+            logging.info(f"Processing RFID data: tag_id={tag_id}, station_id={station_id}")
             
-            # DEBOUNCING: Ignore duplicate scans within 3 seconds
-            scan_key = (tag_id, station_id)
-            if scan_key in self._last_scan_time:
-                time_since_last = (timestamp - self._last_scan_time[scan_key]).total_seconds()
-                if time_since_last < 3.0:  # 3 second debounce window
-                    logging.info(f"RFID scan ignored (debounce): {tag_id} at {station_id} (last scan {time_since_last:.1f}s ago)")
-                    return
+            try:
+                tag_lc = tag_id.lower() if isinstance(tag_id, str) else ''
+            except Exception:
+                tag_lc = ''
+            
+            # TEMPORARILY DISABLE DEBOUNCING TO DEBUG
+            # # DEBOUNCING: Ignore duplicate scans within 3 seconds
+            # scan_key = (tag_id, station_id)
+            # if scan_key in self._last_scan_time:
+            #     time_since_last = (timestamp - self._last_scan_time[scan_key]).total_seconds()
+            #     if time_since_last < 3.0:  # 3 second debounce window
+            #         logging.info(f"RFID scan ignored (debounce): {tag_id} at {station_id} (last scan {time_since_last:.1f}s ago)")
+            #         return
+            # # Global per-tag debounce (regardless of station)
+            # if tag_id in self._last_tag_time:
+            #     time_since_tag = (timestamp - self._last_tag_time[tag_id]).total_seconds()
+            #     if time_since_tag < 3.0:
+            #         logging.info(f"RFID scan ignored (per-tag debounce): {tag_id} ({time_since_tag:.1f}s since last)")
+            #         return
             
             # Update last scan time
+            scan_key = (tag_id, station_id)
             self._last_scan_time[scan_key] = timestamp
+            self._last_tag_time[tag_id] = timestamp
             
             # Map station_id to node_id and checkpoint (you can customize this mapping)
             # Station format examples: A1, A2, B1, B2, etc.
@@ -859,11 +876,6 @@ class SensorDataManager:
             # Special-case: for tag C7761005 and 93BA302D (case-insensitive), advance the
             # checkpoint progress sequentially on every unique scan. Each scan
             # advances to the next configured checkpoint for that node (cycles).
-            try:
-                tag_lc = tag_id.lower() if isinstance(tag_id, str) else ''
-            except Exception:
-                tag_lc = ''
-
             if tag_lc in ['c7761005', '93ba302d']:
                 # Determine the target node ID based on tag
                 target_node = 'C7761005' if tag_lc == 'c7761005' else '93BA302D'
@@ -999,6 +1011,13 @@ class MQTTClient:
         # MQTT Topics (from env with default)
         self.gas_topic = os.getenv("MQTT_TOPIC_1", "LOKI_2004")
         self.rfid_topic = "rfid"  # RFID checkpoint topic (subscription disabled by request)
+        # Control whether RFID-like payloads on the gas topic should be treated as RFID
+        # Default OFF to ensure only explicit RFID topic affects checkpoints
+        self.allow_rfid_on_gas = os.getenv("ALLOW_RFID_ON_GAS", "false").lower() != 'false'
+        # Allow-list of RFID tag_ids that are permitted to affect checkpoints
+        # Comma-separated env list; defaults to the four primary nodes
+        tags_env = os.getenv("ALLOWED_RFID_TAGS", "C7761005,93BA302D,7AA81505,DB970104")
+        self.allowed_rfid_tags = set(t.strip() for t in tags_env.split(',') if t.strip())
     
     def on_connect(self, client, userdata, flags, rc):
         if rc == 0:
@@ -1018,47 +1037,30 @@ class MQTTClient:
         try:
             topic = message.topic
             payload = message.payload.decode('utf-8')
+            logging.info(f"MQTT Message received on topic '{topic}': {payload}")
 
             # Attempt to parse JSON payload
             data = None
             try:
                 data = json.loads(payload)
+                logging.info(f"Parsed JSON data: {data}")
             except Exception:
                 logging.debug(f"Non-JSON payload on {topic}: {payload}")
 
-            # If this message was published on the dedicated RFID topic, route to RFID handler
-            if topic == self.rfid_topic:
-                if isinstance(data, dict):
-                    self.data_manager.add_rfid_data(data)
-                    logging.info(f"Received RFID data on {self.rfid_topic}: {data}")
-                else:
-                    logging.warning(f"Received non-dict RFID payload on {self.rfid_topic}: {payload}")
-
-            # If message was published on the gas topic, try to detect whether it actually
-            # contains RFID scan fields (some publishers send scans to LOKI_2004). If so,
-            # route to the RFID handler; otherwise treat it as gas sensor data.
-            elif topic == self.gas_topic:
-                if isinstance(data, dict) and 'tag_id' in data and 'station_id' in data:
-                    # Treat as RFID scan published to gas topic
-                    self.data_manager.add_rfid_data(data)
-                    logging.info(f"Detected RFID scan on {self.gas_topic}, processed as RFID: {data}")
-                elif isinstance(data, dict):
-                    # Regular gas sensor payload
-                    self.data_manager.add_gas_data(data)
-                    logging.info(f"Received gas data: {data}")
-                else:
-                    logging.warning(f"Received unexpected payload on {self.gas_topic}: {payload}")
+            # Check if this looks like RFID data (has both tag_id and station_id)
+            is_rfid_like = (isinstance(data, dict) and 'tag_id' in data and 'station_id' in data)
+            
+            if is_rfid_like:
+                logging.info(f"RFID-like data detected on topic '{topic}': tag_id={data.get('tag_id')}, station_id={data.get('station_id')}")
+                # Process as RFID regardless of topic (for now, to fix the issue)
+                self.data_manager.add_rfid_data(data)
+                logging.info(f"Processed as RFID: {data}")
+            elif isinstance(data, dict):
+                # Regular sensor data
+                self.data_manager.add_gas_data(data)
+                logging.info(f"Processed as gas/sensor data: {data}")
             else:
-                # For any other topics, attempt to intelligently route if possible
-                if isinstance(data, dict) and 'tag_id' in data and 'station_id' in data:
-                    self.data_manager.add_rfid_data(data)
-                    logging.info(f"Received RFID-style payload on {topic}, processed as RFID: {data}")
-                elif isinstance(data, dict):
-                    # Unknown dict payload; send to gas handler by default
-                    self.data_manager.add_gas_data(data)
-                    logging.info(f"Received dict payload on {topic}, processed as gas-data fallback: {data}")
-                else:
-                    logging.debug(f"Unhandled message on {topic}: {payload}")
+                logging.debug(f"Unhandled message on {topic}: {payload}")
 
         except Exception as e:
             logging.error(f"Error processing message: {e}")
@@ -1125,29 +1127,7 @@ app = dash.Dash(__name__, external_stylesheets=[
 app.title = "🛡 Mine Armour - Gas Sensor Dashboard"
 app.config.suppress_callback_exceptions = True
 
-# --- Lightweight helper HTTP endpoints for testing/resetting RFID counters
-# These run on the same Flask server that Dash uses and are intended for
-# development/testing only. They let you simulate RFID payloads or reset
-# per-tag scan counters without restarting the dashboard.
-@app.server.route('/simulate_rfid', methods=['POST'])
-def simulate_rfid():
-    try:
-        payload = request.get_json(force=True)
-    except Exception:
-        return ("Invalid JSON", 400)
-
-    if not isinstance(payload, dict):
-        return ("Expected JSON object", 400)
-
-    # Allow direct simulation of RFID scan into data_manager
-    try:
-        data_manager.add_rfid_data(payload)
-        return ("OK", 200)
-    except Exception as e:
-        logging.error(f"Error in simulate_rfid: {e}")
-        return ("Internal Error", 500)
-
-
+# --- Admin endpoint to reset RFID per-tag counters (no simulation here)
 @app.server.route('/reset_rfid_counter', methods=['POST'])
 def reset_rfid_counter():
     try:
@@ -1438,6 +1418,11 @@ def zone_select_layout():
                     'color': '#ffcccc',
                     'fontWeight': '600'
                 }),
+                # Live status pills (RFID + GAS)
+                html.Div([
+                    html.Div(id='rfid-live-pill', style={'display':'inline-flex','alignItems':'center','gap':'8px','marginRight':'12px'}),
+                    html.Div(id='gas-live-pill',  style={'display':'inline-flex','alignItems':'center','gap':'8px'})
+                ], style={'display':'flex','justifyContent':'center','marginBottom':'12px'}),
                 html.Div(id='landing-alerts-list', children=[
                     html.P("No active alerts", style={'color': '#99aab5', 'textAlign': 'center', 'fontStyle': 'italic', 'marginTop': '80px', 'fontSize': '1.1rem'})
                 ], style={
@@ -2835,6 +2820,8 @@ def update_rfid_checkpoint_display(n, node_data):
                 checkpoint_container = html.Div([
                     html.Div([
                         icon,
+                        # Show pending/waiting info beneath each circle (default state)
+                        status_info
                     ], style=circle_style),
                     html.Div(checkpoint_name, style={
                         'color': '#ffffff',
@@ -2847,12 +2834,7 @@ def update_rfid_checkpoint_display(n, node_data):
                         'overflow': 'hidden',
                         'width': '80px',
                         'margin': '0 auto'
-                    }),
-                    html.Div([
-                        html.Small("PENDING", style={'color': '#ff4444', 'fontWeight': 'bold', 'fontSize': '9px'}),
-                        html.Br(),
-                        html.Small("Waiting...", style={'color': '#cccccc', 'fontSize': '8px'})
-                    ], style={'textAlign': 'left', 'whiteSpace': 'nowrap', 'width': '80px', 'margin': '0 auto', 'marginTop': '2px'})
+                    })
                 ], style={'display': 'inline-block', 'margin': '0 15px', 'textAlign': 'center', 'verticalAlign': 'top'})
                 flow_elements.append(checkpoint_container)
                 if i < len(default_checkpoints) - 1:
@@ -2953,6 +2935,8 @@ def update_rfid_checkpoint_display(n, node_data):
             checkpoint_container = html.Div([
                 html.Div([
                     icon,
+                    # Show status below each circle (PASSED with time or PENDING)
+                    status_info
                 ], style=circle_style),
                 html.Div(checkpoint_name, style={
                     'color': '#ffffff',
@@ -2965,12 +2949,7 @@ def update_rfid_checkpoint_display(n, node_data):
                     'lineHeight': '1.2',
                     'overflow': 'hidden',
                     'width': '100%'
-                }),
-                html.Div([
-                    html.Small("PENDING", style={'color': '#ff4444', 'fontWeight': 'bold', 'fontSize': '9px', 'marginLeft': '8px'}),
-                    html.Br(),
-                    html.Small("Waiting...", style={'color': '#cccccc', 'fontSize': '8px', 'marginLeft': '8px'})
-                ], style={'textAlign': 'left', 'whiteSpace': 'nowrap', 'width': '80px', 'margin': '0', 'marginTop': '2px'})
+                })
             ], style={'display': 'inline-block', 'margin': '0 15px', 'textAlign': 'left', 'verticalAlign': 'top'})
             
             flow_elements.append(checkpoint_container)
@@ -3248,6 +3227,62 @@ def render_landing_alerts(alerts_data, clear_clicks):
         import traceback
         logging.error(f"Error rendering landing alerts: {e}\n{traceback.format_exc()}")
         return [html.P("Error loading alerts", style={'color': '#ff4444', 'textAlign': 'center'})]
+
+
+# -------------------------------------------------
+# Landing page LIVE indicators for RFID and GAS data
+# -------------------------------------------------
+@app.callback(
+    [Output('rfid-live-pill', 'children'), Output('gas-live-pill', 'children')],
+    Input('global-interval', 'n_intervals'),
+    prevent_initial_call=False
+)
+def update_live_pills(_n):
+    try:
+        now = datetime.now()
+
+        # Helper to build a pill with a colored dot and label
+        def pill(label, is_live, last_ts):
+            color = '#19c37d' if is_live else '#6b6b6b'
+            bg = 'rgba(25,195,125,0.15)' if is_live else 'rgba(255,255,255,0.08)'
+            ts_str = last_ts.strftime('%H:%M:%S') if last_ts else '—'
+            return html.Div([
+                html.Span('', style={
+                    'display':'inline-block','width':'10px','height':'10px','borderRadius':'50%','backgroundColor':color,
+                    'boxShadow': f'0 0 10px {color}' if is_live else 'none'
+                }),
+                html.Span(f"{label}: {'LIVE' if is_live else 'idle'}", style={'color':'#fff','fontSize':'0.80rem','fontWeight':'700'}),
+                html.Span(f" • {ts_str}", style={'color':'#ffcccc','fontSize':'0.72rem','marginLeft':'6px','opacity':0.8})
+            ], style={'background': bg, 'border':'1px solid #800000','padding':'6px 10px','borderRadius':'14px'})
+
+        # Get latest timestamps
+        rfid_ts = None
+        gas_ts = None
+        try:
+            rts = data_manager.data['rfid_checkpoints']['timestamps']
+            rfid_ts = rts[-1] if len(rts) else None
+        except Exception:
+            rfid_ts = None
+        try:
+            gts = data_manager.data['gas_sensors']['timestamps']
+            gas_ts = gts[-1] if len(gts) else None
+        except Exception:
+            gas_ts = None
+
+        # Consider data LIVE if within last 5 seconds and MQTT connected
+        def is_live(ts):
+            if not ts:
+                return False
+            age = (now - ts).total_seconds()
+            return age <= 5 and mqtt_client.connected
+
+        rfid_live = is_live(rfid_ts)
+        gas_live = is_live(gas_ts)
+
+        return pill('RFID', rfid_live, rfid_ts), pill('GAS', gas_live, gas_ts)
+    except Exception:
+        # Fallback to idle pills on any error
+        return (html.Div("RFID: idle", style={'color':'#aaa'}), html.Div("GAS: idle", style={'color':'#aaa'}))
 
 
 # Clear alerts callback (handles both clear buttons)
