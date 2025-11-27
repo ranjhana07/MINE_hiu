@@ -1477,30 +1477,21 @@ def zone_select_layout():
 # ---------------------------
 def nodes_layout(zone_name):
     # Get nodes for the selected zone
-    zone_nodes = {
-        'ZONE_A': [
-            {'id': 'C7761005', 'name': 'NODE C7761005 - SUSHMA', 'status': 'Active'},
-            {'id': '93BA302D', 'name': 'NODE 93BA302D - TRISHALA', 'status': 'Active'},
-            {'id': '7AA81505', 'name': 'NODE 7AA81505 - RANJHANA', 'status': 'Active'},
-            {'id': 'DB970104', 'name': 'NODE DB970104 - LOKESH', 'status': 'Active'}
-        ],
-        'ZONE_B': [
-            {'id': '2001', 'name': 'Node 2001', 'status': 'Active'},
-            {'id': '2055', 'name': 'Node 2055', 'status': 'Active'},
-            {'id': '2089', 'name': 'Node 2089', 'status': 'Active'}
-        ],
-        'ZONE_C': [
-            {'id': '3012', 'name': 'Node 3012', 'status': 'Active'},
-            {'id': '3067', 'name': 'Node 3067', 'status': 'Active'},
-            {'id': '3134', 'name': 'Node 3134', 'status': 'Active'}
-        ]
-    }
-    # Add Zone D as a valid zone (placeholder nodes)
-    zone_nodes['ZONE_D'] = [
-        {'id': '4001', 'name': 'Node 4001', 'status': 'Active'},
-        {'id': '4055', 'name': 'Node 4055', 'status': 'Active'},
-        {'id': '4089', 'name': 'Node 4089', 'status': 'Active'}
+    # Use the same primary 4 named nodes across all zones so Zone B/C/D show the
+    # same node cards as Zone A (matches the RFID/node mapping used elsewhere).
+    primary_nodes = [
+        {'id': 'C7761005', 'name': 'NODE C7761005 - SUSHMA', 'status': 'Active'},
+        {'id': '93BA302D', 'name': 'NODE 93BA302D - TRISHALA', 'status': 'Active'},
+        {'id': '7AA81505', 'name': 'NODE 7AA81505 - RANJHANA', 'status': 'Active'},
+        {'id': 'DB970104', 'name': 'NODE DB970104 - LOKESH', 'status': 'Active'}
     ]
+
+    zone_nodes = {
+        'ZONE_A': primary_nodes,
+        'ZONE_B': primary_nodes,
+        'ZONE_C': primary_nodes,
+        'ZONE_D': primary_nodes
+    }
     
     nodes = zone_nodes.get(zone_name, [])
     
