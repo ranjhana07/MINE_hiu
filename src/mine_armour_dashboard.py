@@ -683,12 +683,32 @@ class SensorDataManager:
             
             # Add gas sensor data
             self.data['gas_sensors']['timestamps'].append(timestamp)
-            
-            lpg = data.get('LPG', 0)
-            ch4 = data.get('CH4', 0)
-            propane = data.get('Propane', 0)
-            butane = data.get('Butane', 0)
-            h2 = data.get('H2', 0)
+            # Safe numeric casting helpers (handle strings from publishers)
+
+            def _to_float(v, default=0.0):
+                try:
+                    # Treat empty strings/null as default
+                    if v is None or (isinstance(v, str) and not v.strip()):
+                        return default
+                    return float(v)
+                except Exception:
+                    return default
+
+            def _to_int(v, default=0):
+                try:
+                    if v is None or (isinstance(v, str) and not v.strip()):
+                        return default
+                    # Some payloads use floats for integer-like values; cast via float->int safely
+                    return int(float(v))
+                except Exception:
+                    return default
+
+            # Gas sensors
+            lpg = _to_float(data.get('LPG', 0.0), 0.0)
+            ch4 = _to_float(data.get('CH4', 0.0), 0.0)
+            propane = _to_float(data.get('Propane', 0.0), 0.0)
+            butane = _to_float(data.get('Butane', 0.0), 0.0)
+            h2 = _to_float(data.get('H2', 0.0), 0.0)
             
             self.data['gas_sensors']['LPG'].append(lpg)
             self.data['gas_sensors']['CH4'].append(ch4)
@@ -698,10 +718,10 @@ class SensorDataManager:
             
             # Add health sensor data
             self.data['health_sensors']['timestamps'].append(timestamp)
-            heartRate = data.get('heartRate', -1)
-            spo2 = data.get('spo2', -1)
-            gsr = data.get('GSR', 0)
-            stress = data.get('stress', 0)
+            heartRate = _to_int(data.get('heartRate', -1), -1)
+            spo2 = _to_float(data.get('spo2', -1), -1)
+            gsr = _to_float(data.get('GSR', 0.0), 0.0)
+            stress = _to_int(data.get('stress', 0), 0)
             
             self.data['health_sensors']['heartRate'].append(heartRate if heartRate != -1 else None)
             self.data['health_sensors']['spo2'].append(spo2 if spo2 != -1 else None)
@@ -710,18 +730,18 @@ class SensorDataManager:
             
             # Add environmental sensor data
             self.data['environmental_sensors']['timestamps'].append(timestamp)
-            temperature = data.get('temperature', -1.0)
-            humidity = data.get('humidity', -1.0)
+            temperature = _to_float(data.get('temperature', -1.0), -1.0)
+            humidity = _to_float(data.get('humidity', -1.0), -1.0)
             
             self.data['environmental_sensors']['temperature'].append(temperature if temperature != -1.0 else None)
             self.data['environmental_sensors']['humidity'].append(humidity if humidity != -1.0 else None)
             
             # Add GPS data
             self.data['gps_data']['timestamps'].append(timestamp)
-            lat = data.get('lat', 0.0)
-            lon = data.get('lon', 0.0)
-            alt = data.get('alt', 0.0)
-            sat = data.get('sat', 0)
+            lat = _to_float(data.get('lat', 0.0), 0.0)
+            lon = _to_float(data.get('lon', 0.0), 0.0)
+            alt = _to_float(data.get('alt', 0.0), 0.0)
+            sat = _to_int(data.get('sat', 0), 0)
             
             self.data['gps_data']['lat'].append(lat)
             self.data['gps_data']['lon'].append(lon)
@@ -772,7 +792,14 @@ class SensorDataManager:
                 'sat': sat
             }
             
-            logging.info(f"All sensor data updated: Gas={lpg:.2f}, GPS=({lat:.6f},{lon:.6f}), Health=HR:{heartRate},SpO2:{spo2}")
+            try:
+                logging.info(
+                    f"All sensor data updated: Gas={lpg:.2f}, CH4={ch4:.2f}, Propane={propane:.2f}, Butane={butane:.2f}, H2={h2:.2f}; "
+                    f"GPS=({lat:.6f},{lon:.6f}) Alt={alt:.1f} Sat={sat}; Health=HR:{heartRate}, SpO2:{spo2} Temp:{temperature} Hum:{humidity}"
+                )
+            except Exception:
+                # Avoid any formatting issues breaking runtime
+                logging.info("All sensor data updated (logging suppressed due to formatting error)")
     
     def get_gas_data(self):
         """Get gas sensor data for plotting"""
@@ -1009,8 +1036,37 @@ class MQTTClient:
         self.mqtt_password = os.getenv("MQTT_PASSWORD")
         
         # MQTT Topics (from env with default)
+        # Primary topic as configured
         self.gas_topic = os.getenv("MQTT_TOPIC_1", "LOKI_2004")
-        self.rfid_topic = "rfid"  # RFID checkpoint topic (subscription disabled by request)
+        self.rfid_topic = "rfid"
+
+        # Allow subscribing to multiple topic aliases to avoid env typos/mismatches.
+        # You can override via CSV env `MQTT_TOPICS`, otherwise we add sensible aliases
+        # derived from `MQTT_TOPIC_1` (with/without underscore, common LOKI/LOKL typo).
+        topics_csv = os.getenv("MQTT_TOPICS")
+        aliases = set()
+        try:
+            base = (self.gas_topic or "").strip()
+            if base:
+                aliases.add(base)
+                # Remove underscores
+                aliases.add(base.replace("_", ""))
+                # Add with underscore if missing
+                if "_" not in base and len(base) > 4:
+                    aliases.add(base[:4] + "_" + base[4:])
+                # Common typo: I ↔ L in LOKI/LOKL
+                aliases.add(base.replace("LOKI", "LOKL"))
+                aliases.add(base.replace("LOKL", "LOKI"))
+            # If MQTT_TOPICS provided, merge those
+            if topics_csv:
+                for t in topics_csv.split(','):
+                    t = t.strip()
+                    if t:
+                        aliases.add(t)
+        except Exception:
+            aliases.add(self.gas_topic)
+        # Final ordered list of topics to subscribe
+        self.subscribe_topics = sorted(aliases)
         # Control whether RFID-like payloads on the gas topic should be treated as RFID
         # Default OFF to ensure only explicit RFID topic affects checkpoints
         self.allow_rfid_on_gas = os.getenv("ALLOW_RFID_ON_GAS", "false").lower() != 'false'
@@ -1023,9 +1079,13 @@ class MQTTClient:
         if rc == 0:
             self.connected = True
             logging.info("Connected to MQTT broker")
-            # Subscribe to gas sensor topic (primary source)
-            client.subscribe(self.gas_topic)
-            logging.info(f"Subscribed to {self.gas_topic}")
+            # Subscribe to gas/sensor topics (primary source + aliases)
+            for t in self.subscribe_topics:
+                try:
+                    client.subscribe(t)
+                    logging.info(f"Subscribed to topic: {t}")
+                except Exception as e:
+                    logging.error(f"Failed subscribing to {t}: {e}")
             # Subscribe to RFID topics to receive checkpoint scans
             client.subscribe("rfid")
             client.subscribe("rfid/#")
@@ -1037,13 +1097,13 @@ class MQTTClient:
         try:
             topic = message.topic
             payload = message.payload.decode('utf-8')
-            logging.info(f"MQTT Message received on topic '{topic}': {payload}")
+            logging.info(f"MQTT message on '{topic}': {payload}")
 
             # Attempt to parse JSON payload
             data = None
             try:
                 data = json.loads(payload)
-                logging.info(f"Parsed JSON data: {data}")
+                logging.debug(f"Parsed JSON: keys={list(data.keys()) if isinstance(data, dict) else type(data)}")
             except Exception:
                 logging.debug(f"Non-JSON payload on {topic}: {payload}")
 
@@ -1058,7 +1118,12 @@ class MQTTClient:
             elif isinstance(data, dict):
                 # Regular sensor data
                 self.data_manager.add_gas_data(data)
-                logging.info(f"Processed as gas/sensor data: {data}")
+                latest = self.data_manager.get_gas_data().get('latest', {})
+                logging.info(
+                    "Updated sensors | LPG=%s CH4=%s Propane=%s Butane=%s H2=%s HR=%s SpO2=%s Temp=%s Hum=%s",
+                    latest.get('LPG'), latest.get('CH4'), latest.get('Propane'), latest.get('Butane'), latest.get('H2'),
+                    latest.get('heartRate'), latest.get('spo2'), latest.get('temperature'), latest.get('humidity')
+                )
             else:
                 logging.debug(f"Unhandled message on {topic}: {payload}")
 
@@ -2148,9 +2213,15 @@ def update_current_values(n):
         butane_val = f"{latest.get('Butane', 0):.2f}" if latest.get('Butane') is not None else "---"
         h2_val = f"{latest.get('H2', 0):.2f}" if latest.get('H2') is not None else "---"
         
-        # Format additional sensor values
-        heart_val = f"{latest.get('heartRate', -1)}" if latest.get('heartRate', -1) != -1 else "---"
-        spo2_val = f"{latest.get('spo2', -1):.1f}%" if latest.get('spo2', -1) != -1 else "---"
+        # Format additional sensor values (treat 0 or negative as no reading)
+        heart_raw = latest.get('heartRate', -1)
+        spo2_raw = latest.get('spo2', -1)
+        heart_val = (
+            f"{int(heart_raw)}" if isinstance(heart_raw, (int, float)) and heart_raw > 0 else "---"
+        )
+        spo2_val = (
+            f"{float(spo2_raw):.1f}%" if isinstance(spo2_raw, (int, float)) and spo2_raw > 0 else "---"
+        )
         temp_val = f"{latest.get('temperature', -1.0):.1f}°C" if latest.get('temperature', -1.0) != -1.0 else "---"
         hum_val = f"{latest.get('humidity', -1.0):.1f}%" if latest.get('humidity', -1.0) != -1.0 else "---"
         gsr_val = f"{latest.get('GSR', 0)}" if latest.get('GSR', 0) else "---"
