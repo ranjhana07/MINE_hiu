@@ -1391,6 +1391,7 @@ app.layout = html.Div([
     dcc.Store(id='selected-node-store', storage_type='session'),
     dcc.Store(id='checkpoint-reset-store', storage_type='session'),
     dcc.Store(id='auth-store', storage_type='session'),
+    dcc.Store(id='mine-type-store', storage_type='session'),
     # Global interval so alerts monitoring runs even on the landing page
     # Reduced to 3000ms (3 seconds) to prevent UI "freaking out" from too many updates
     dcc.Interval(id='global-interval', interval=3000, n_intervals=0),
@@ -1617,6 +1618,130 @@ def login_layout():
     ])
 
 # ---------------------------
+# Page: Mine Type Selection (after login)
+# ---------------------------
+def mine_choice_layout():
+    return html.Div([
+        html.Div([
+            html.Div([
+                html.H1("Select Mine Type", className='landing-title'),
+                html.Div("Choose operation mode", className='landing-subtext', style={'marginTop':'-18px','fontSize':'0.9rem'}),
+                dbc.Row([
+                    dbc.Col(dbc.Card([
+                        dbc.CardBody([
+                            html.H3("Underground Mine", style={'color':'#fff','fontWeight':'700','marginBottom':'10px','textAlign':'center'}),
+                            html.Button("ENTER Underground", id='mine-underground-btn', n_clicks=0, className='landing-btn')
+                        ])
+                    ], style=card_style), width=12)
+                ], className='mb-3'),
+                dbc.Row([
+                    dbc.Col(dbc.Card([
+                        dbc.CardBody([
+                            html.H3("Open Cast Mine", style={'color':'#fff','fontWeight':'700','marginBottom':'10px','textAlign':'center'}),
+                            html.Button("ENTER Open Cast", id='mine-open-cast-btn', n_clicks=0, className='landing-btn', style={'background':'linear-gradient(45deg,#666,#999)'})
+                        ])
+                    ], style=card_style), width=12)
+                ]),
+            ], className='landing-card', style={'maxWidth':'520px'})
+        ], className='landing-wrapper')
+    ])
+
+# ---------------------------
+# Page: Open Cast Mine
+# ---------------------------
+def open_cast_layout():
+    # Reuse primary nodes as users on Open Cast page
+    primary_nodes = [
+        {'id': 'C7761005', 'name': 'USER SUSHMA', 'status': 'Active'},
+        {'id': '93BA302D', 'name': 'USER TRISHALA', 'status': 'Active'},
+        {'id': '7AA81505', 'name': 'USER RANJHANA', 'status': 'Active'},
+        {'id': 'DB970104', 'name': 'USER LOKESH', 'status': 'Active'}
+    ]
+
+    node_cards = []
+    for node in primary_nodes:
+        card = dbc.Card([
+            dbc.CardBody([
+                html.H4(node['name'], className='card-title', style={'color': '#ff4444', 'marginBottom': '8px'}),
+                html.P(f"Node ID: {node['id']}", style={'color': '#cccccc', 'marginBottom': '4px'}),
+                html.P(f"Status: {node['status']}", style={'color': '#00ff88', 'marginBottom': '12px'}),
+                html.Button(
+                    "SELECT USER",
+                    id={'type': 'node-select-btn', 'index': node['id']},
+                    n_clicks=0,
+                    className='btn btn-danger',
+                    style={
+                        'background': 'linear-gradient(45deg, #cc0000, #ff4444)',
+                        'border': 'none',
+                        'color': 'white',
+                        'fontWeight': 'bold',
+                        'width': '100%',
+                        'padding': '8px'
+                    }
+                )
+            ])
+        ], style={
+            'background': 'linear-gradient(135deg, #1a0000, #330000)',
+            'border': '1px solid #660000',
+            'marginBottom': '15px',
+            'boxShadow': '0 4px 8px rgba(255,68,68,0.2)'
+        })
+        node_cards.append(card)
+
+    # Top-aligned layout without full-height wrapper
+    return dbc.Container([
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H1("Open Cast Operations", className='landing-title')
+                ], style=header_style)
+            ], width=12)
+        ], className='mb-4'),
+
+        dbc.Row([
+            # Left: Alerts
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardHeader([
+                        html.H4("Machinery Alerts", style={'color': '#ffffff', 'margin': '0'})
+                    ], style={'background': 'linear-gradient(45deg, #2d0000, #550000)', 'border': 'none'}),
+                    dbc.CardBody([
+                        html.Div(id='open-cast-machinery-alerts-list', children=[
+                            html.P("No machinery alerts", style={'color': '#99aab5'})
+                        ])
+                    ], style={'background': 'linear-gradient(135deg, #1a0000, #330000)', 'color': '#ffffff'})
+                ], style={'border': '1px solid #660000', 'boxShadow': '0 4px 8px rgba(255,107,107,0.2)'}, className='mb-3'),
+
+                dbc.Card([
+                    dbc.CardHeader([
+                        html.H4("Health Alerts", style={'color': '#ffffff', 'margin': '0'})
+                    ], style={'background': 'linear-gradient(45deg, #2d0000, #550000)', 'border': 'none'}),
+                    dbc.CardBody([
+                        html.Div(id='open-cast-health-alerts-list', children=[
+                            html.P("No health alerts", style={'color': '#99aab5'})
+                        ]),
+                        html.Div([
+                            dbc.Button("Clear Alerts", id='open-cast-clear-alerts-btn', color='danger', size='sm')
+                        ], style={'textAlign': 'right', 'marginTop': '10px'})
+                    ], style={'background': 'linear-gradient(135deg, #1a0000, #330000)', 'color': '#ffffff'})
+                ], style={'border': '1px solid #660000', 'boxShadow': '0 4px 8px rgba(255,107,107,0.2)'})
+            ], width=6),
+
+            # Right: Users/Nodes
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardHeader([
+                        html.H4("Select User", style={'color': '#ffffff', 'margin': '0'})
+                    ], style={'background': 'linear-gradient(45deg, #660000, #990000)', 'border': 'none'}),
+                    dbc.CardBody([
+                        html.Div(node_cards, style={'maxHeight': '520px', 'overflowY': 'auto', 'padding': '10px'})
+                    ], style={'background': 'linear-gradient(135deg, #1a0000, #330000)', 'color': '#ffffff'})
+                ], style={'border': '1px solid #660000', 'boxShadow': '0 4px 8px rgba(255,107,107,0.2)'})
+            ], width=6)
+        ])
+    ], fluid=True, style=custom_style)
+
+# ---------------------------
 # Page: Vitals Dashboard (existing content refactored)
 # ---------------------------
 def vitals_layout():
@@ -1823,48 +1948,50 @@ def vitals_layout():
     ], className="mb-4"),
     
     # RFID Checkpoint Status Section
-    dbc.Row([
-        dbc.Col([
-            dbc.Card([
-                dbc.CardHeader([
-                    html.H4([
-                        "RFID Checkpoint Status"
-                    ], style={'color': '#ffffff', 'margin': '0'})
-                ], style={'background': 'linear-gradient(45deg, #660000, #990000)', 'border': 'none'}),
-                dbc.CardBody([
-                    html.Div([
+    html.Div([
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardHeader([
+                        html.H4([
+                            "RFID Checkpoint Status"
+                        ], style={'color': '#ffffff', 'margin': '0'})
+                    ], style={'background': 'linear-gradient(45deg, #660000, #990000)', 'border': 'none'}),
+                    dbc.CardBody([
                         html.Div([
-                            html.P("Selected Node:", style={'color': '#cccccc', 'marginBottom': '5px', 'fontSize': '0.9rem'}),
-                            html.H5(id="selected-node-display", children="No node selected", 
-                                   style={'color': '#ffffff', 'marginBottom': '15px'})
-                        ]),
-                        html.Div([
-                            html.P("Latest RFID Scan:", style={'color': '#cccccc', 'marginBottom': '5px', 'fontSize': '0.9rem'}),
-                            html.H6(id="latest-rfid-scan", children="No scans yet", 
-                                   style={'color': '#ffcccc', 'marginBottom': '15px'})
-                        ]),
-                        html.Hr(style={'borderColor': '#660000', 'margin': '15px 0'}),
-                        html.Div([
-                            html.H6("Checkpoint Flow Diagram:", style={'color': '#ffffff', 'marginBottom': '15px', 'textAlign': 'center'}),
-                            html.Div(id="checkpoint-flow-diagram", children=[
-                                html.P("Select a node to view checkpoint flow", 
-                                      style={'color': '#999999', 'fontStyle': 'italic', 'textAlign': 'center'})
-                            ], style={
-                                'minHeight': '120px',
-                                'display': 'flex',
-                                'alignItems': 'center',
-                                'justifyContent': 'center',
-                                'background': 'linear-gradient(135deg, #0d0000, #1a0000)',
-                                'border': '1px solid #440000',
-                                'borderRadius': '8px',
-                                'padding': '15px'
-                            })
+                            html.Div([
+                                html.P("Selected Node:", style={'color': '#cccccc', 'marginBottom': '5px', 'fontSize': '0.9rem'}),
+                                html.H5(id="selected-node-display", children="No node selected", 
+                                       style={'color': '#ffffff', 'marginBottom': '15px'})
+                            ]),
+                            html.Div([
+                                html.P("Latest RFID Scan:", style={'color': '#cccccc', 'marginBottom': '5px', 'fontSize': '0.9rem'}),
+                                html.H6(id="latest-rfid-scan", children="No scans yet", 
+                                       style={'color': '#ffcccc', 'marginBottom': '15px'})
+                            ]),
+                            html.Hr(style={'borderColor': '#660000', 'margin': '15px 0'}),
+                            html.Div([
+                                html.H6("Checkpoint Flow Diagram:", style={'color': '#ffffff', 'marginBottom': '15px', 'textAlign': 'center'}),
+                                html.Div(id="checkpoint-flow-diagram", children=[
+                                    html.P("Select a node to view checkpoint flow", 
+                                          style={'color': '#999999', 'fontStyle': 'italic', 'textAlign': 'center'})
+                                ], style={
+                                    'minHeight': '120px',
+                                    'display': 'flex',
+                                    'alignItems': 'center',
+                                    'justifyContent': 'center',
+                                    'background': 'linear-gradient(135deg, #0d0000, #1a0000)',
+                                    'border': '1px solid #440000',
+                                    'borderRadius': '8px',
+                                    'padding': '15px'
+                                })
+                            ])
                         ])
-                    ])
-                ], style={'background': 'linear-gradient(135deg, #1a0000, #330000)', 'color': '#ffffff'})
-            ], style={'border': '1px solid #660000', 'boxShadow': '0 4px 8px rgba(255,107,107,0.2)'})
-        ], width=12)
-    ], className="mb-4"),
+                    ], style={'background': 'linear-gradient(135deg, #1a0000, #330000)', 'color': '#ffffff'})
+                ], style={'border': '1px solid #660000', 'boxShadow': '0 4px 8px rgba(255,107,107,0.2)'})
+            ], width=12)
+        ], className="mb-4")
+    ], id='rfid-section'),
 
     # Alerts Section (shows important alerts like high heart rate with zone/node context)
     dbc.Row([
@@ -1887,94 +2014,97 @@ def vitals_layout():
         ], width=12)
     ], className='mb-4'),
     
-    # GPS and Additional Sensors Section Header
-    dbc.Row([
-        dbc.Col([
-            html.H2([
-                html.I(className="fas fa-satellite-dish me-3"),
-                "🛰 REAL-TIME GPS TRACKING & SENSOR MONITORING"
-            ], className="text-center mb-4", 
-               style={'color': '#ffffff', 'fontWeight': 'bold'})
-        ])
-    ], className="mb-4"),
-    
-    # GPS Information Cards
-    dbc.Row([
-        dbc.Col([
-            dbc.Card([
-                dbc.CardBody([
-                    html.Div([
-                        html.I(className="fas fa-crosshairs text-danger", style={'fontSize': '2rem'}),
-                        html.H4(id="gps-lat", className="mb-0 mt-2", 
-                               style={'color': '#e74c3c', 'fontWeight': 'bold'}),
-                        html.P("Latitude", className="text-muted mb-0")
-                    ], className="text-center")
-                ])
-            ], style=card_style)
-        ], width=3),
+    # GPS and Additional Sensors Section (wrapped for conditional visibility)
+    html.Div([
+        # Header
+        dbc.Row([
+            dbc.Col([
+                html.H2([
+                    html.I(className="fas fa-satellite-dish me-3"),
+                    "🛰 REAL-TIME GPS TRACKING & SENSOR MONITORING"
+                ], className="text-center mb-4", 
+                   style={'color': '#ffffff', 'fontWeight': 'bold'})
+            ])
+        ], className="mb-4"),
         
-        dbc.Col([
-            dbc.Card([
-                dbc.CardBody([
-                    html.Div([
-                        html.I(className="fas fa-compass text-primary", style={'fontSize': '2rem'}),
-                        html.H4(id="gps-lon", className="mb-0 mt-2", 
-                               style={'color': '#3498db', 'fontWeight': 'bold'}),
-                        html.P("Longitude", className="text-muted mb-0")
-                    ], className="text-center")
-                ])
-            ], style=card_style)
-        ], width=3),
+        # GPS Information Cards
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        html.Div([
+                            html.I(className="fas fa-crosshairs text-danger", style={'fontSize': '2rem'}),
+                            html.H4(id="gps-lat", className="mb-0 mt-2", 
+                                   style={'color': '#e74c3c', 'fontWeight': 'bold'}),
+                            html.P("Latitude", className="text-muted mb-0")
+                        ], className="text-center")
+                    ])
+                ], style=card_style)
+            ], width=3),
+            
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        html.Div([
+                            html.I(className="fas fa-compass text-primary", style={'fontSize': '2rem'}),
+                            html.H4(id="gps-lon", className="mb-0 mt-2", 
+                                   style={'color': '#3498db', 'fontWeight': 'bold'}),
+                            html.P("Longitude", className="text-muted mb-0")
+                        ], className="text-center")
+                    ])
+                ], style=card_style)
+            ], width=3),
+            
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        html.Div([
+                            html.I(className="fas fa-mountain text-success", style={'fontSize': '2rem'}),
+                            html.H4(id="gps-alt", className="mb-0 mt-2", 
+                                   style={'color': '#27ae60', 'fontWeight': 'bold'}),
+                            html.P("Altitude (m)", className="text-muted mb-0")
+                        ], className="text-center")
+                    ])
+                ], style=card_style)
+            ], width=3),
+            
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        html.Div([
+                            html.I(className="fas fa-satellite text-warning", style={'fontSize': '2rem'}),
+                            html.H4(id="gps-sat", className="mb-0 mt-2", 
+                                   style={'color': '#f39c12', 'fontWeight': 'bold'}),
+                            html.P("Satellites", className="text-muted mb-0")
+                        ], className="text-center")
+                    ])
+                ], style=card_style)
+            ], width=3)
+        ], className="mb-4"),
         
-        dbc.Col([
-            dbc.Card([
-                dbc.CardBody([
-                    html.Div([
-                        html.I(className="fas fa-mountain text-success", style={'fontSize': '2rem'}),
-                        html.H4(id="gps-alt", className="mb-0 mt-2", 
-                               style={'color': '#27ae60', 'fontWeight': 'bold'}),
-                        html.P("Altitude (m)", className="text-muted mb-0")
-                    ], className="text-center")
-                ])
-            ], style=card_style)
-        ], width=3),
-        
-        dbc.Col([
-            dbc.Card([
-                dbc.CardBody([
-                    html.Div([
-                        html.I(className="fas fa-satellite text-warning", style={'fontSize': '2rem'}),
-                        html.H4(id="gps-sat", className="mb-0 mt-2", 
-                               style={'color': '#f39c12', 'fontWeight': 'bold'}),
-                        html.P("Satellites", className="text-muted mb-0")
-                    ], className="text-center")
-                ])
-            ], style=card_style)
-        ], width=3)
-    ], className="mb-4"),
-    
-    # Enhanced GPS Map (Full Width) and Health Sensor Chart
-    dbc.Row([
-        dbc.Col([
-            html.Div([
-                dcc.Graph(id="gps-map", 
-                         config={
-                             'displayModeBar': True,
-                             'displaylogo': False,
-                             'modeBarButtonsToRemove': ['pan2d', 'lasso2d', 'select2d'],
-                             'modeBarButtonsToAdd': ['resetViews']
-                         },
-                         style={'backgroundColor': 'transparent'})
-            ], style=chart_style)
-        ], width=8),  # Larger GPS map
-        dbc.Col([
-            html.Div([
-                dcc.Graph(id="heartrate-chart", 
-                         config={'displayModeBar': False},
-                         style={'backgroundColor': 'transparent'})
-            ], style=chart_style)
-        ], width=4)
-    ], className="mb-4"),
+        # Enhanced GPS Map (Full Width) and Health Sensor Chart
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    dcc.Graph(id="gps-map", 
+                             config={
+                                 'displayModeBar': True,
+                                 'displaylogo': False,
+                                 'modeBarButtonsToRemove': ['pan2d', 'lasso2d', 'select2d'],
+                                 'modeBarButtonsToAdd': ['resetViews']
+                             },
+                             style={'backgroundColor': 'transparent'})
+                ], style=chart_style)
+            ], width=8),  # Larger GPS map
+            dbc.Col([
+                html.Div([
+                    dcc.Graph(id="heartrate-chart", 
+                             config={'displayModeBar': False},
+                             style={'backgroundColor': 'transparent'})
+                ], style=chart_style)
+            ], width=4)
+        ], className="mb-4")
+    ], id='gps-section'),
     
     dbc.Row([
         dbc.Col([
@@ -2112,6 +2242,8 @@ def display_page(pathname, zone_data, auth_data):
 
     if not auth_data and pathname == '/vitals':
         return login_layout()
+    if pathname == '/mine-choice':
+        return mine_choice_layout()
     if pathname == '/nodes':
         # Show nodes page for the selected zone
         if zone_data and 'zone' in zone_data:
@@ -2119,6 +2251,8 @@ def display_page(pathname, zone_data, auth_data):
         else:
             # No zone selected, go back to zone selection
             return zone_select_layout()
+    if pathname == '/open-cast':
+        return open_cast_layout()
     if pathname == '/vitals':
         return vitals_layout()
     # default root -> zone selection
@@ -2166,8 +2300,72 @@ def login_action(n, username, password):
     if not username or not password:
         return dash.no_update, 'Enter username and password.', dash.no_update
     if username == 'admin' and password == 'admin123':
-        return {'user':'admin'}, 'Login success. Redirecting...', '/'
+        return {'user':'admin'}, 'Login success. Redirecting...', '/mine-choice'
     return dash.no_update, 'Invalid credentials.', dash.no_update
+
+# ---------------------------
+# Mine choice navigation
+# ---------------------------
+@app.callback(
+    [Output('url','pathname', allow_duplicate=True), Output('mine-type-store','data')],
+    [Input('mine-underground-btn','n_clicks'), Input('mine-open-cast-btn','n_clicks')],
+    prevent_initial_call=True
+)
+def mine_choice_nav(n_und, n_open):
+    ctx = callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+    triggered = ctx.triggered[0]['prop_id'].split('.')[0]
+    if triggered == 'mine-underground-btn':
+        # Navigate to the existing Zone selection (Zone 1 page)
+        return '/', {'mineType': 'underground'}
+    if triggered == 'mine-open-cast-btn':
+        # Placeholder route; currently reuses zone selection
+        return '/open-cast', {'mineType': 'open-cast'}
+    raise PreventUpdate
+
+# ---------------------------
+# Open Cast alerts rendering (simple split into two lists)
+# ---------------------------
+@app.callback(
+    [Output('open-cast-health-alerts-list', 'children'), Output('open-cast-machinery-alerts-list', 'children')],
+    [Input('alerts-store', 'data'), Input('open-cast-clear-alerts-btn', 'n_clicks')],
+    prevent_initial_call=False
+)
+def render_open_cast_alerts(alerts_data, clear_clicks):
+    # If clear button clicked, show empty lists
+    ctx = callback_context
+    if ctx.triggered and ctx.triggered[0]['prop_id'].startswith('open-cast-clear-alerts-btn'):
+        return [html.P("No health alerts", style={'color': '#99aab5'})], [html.P("No machinery alerts", style={'color': '#99aab5'})]
+
+    alerts = alerts_data or []
+    # Build simple items; if alert dicts have 'category' or 'type', we can split, else show all in both
+    health_items = []
+    machinery_items = []
+    for a in alerts if isinstance(alerts, list) else []:
+        text = a.get('message') if isinstance(a, dict) else str(a)
+        cat = (a.get('category') or a.get('type') or '').lower() if isinstance(a, dict) else ''
+        item = html.Li(text, style={'color': '#ffcccc'})
+        if 'health' in cat:
+            health_items.append(item)
+        elif 'machine' in cat or 'machinery' in cat:
+            machinery_items.append(item)
+        else:
+            # Uncategorized: mirror into both buckets for now
+            health_items.append(item)
+            machinery_items.append(item)
+
+    if not health_items:
+        health_items = [html.P("No health alerts", style={'color': '#99aab5'})]
+    else:
+        health_items = [html.Ul(health_items, style={'paddingLeft': '18px'})]
+
+    if not machinery_items:
+        machinery_items = [html.P("No machinery alerts", style={'color': '#99aab5'})]
+    else:
+        machinery_items = [html.Ul(machinery_items, style={'paddingLeft': '18px'})]
+
+    return health_items, machinery_items
 
 ## Removed zone/worker demo callbacks and synthetic worker chart filters.
 
@@ -2794,18 +2992,33 @@ def update_gsr_chart(n):
 # Node selection callback (from nodes page to vitals)
 @app.callback(
     [Output('selected-node-store','data'), Output('url','pathname', allow_duplicate=True)],
-    Input({'type': 'node-select-btn', 'index': ALL}, 'n_clicks'),
+    [Input({'type': 'node-select-btn', 'index': ALL}, 'n_clicks'), Input('url','pathname')],
+    State('mine-type-store','data'),
     prevent_initial_call=True
 )
-def select_node(n_clicks_list):
+def select_node(n_clicks_list, pathname, mine_type_data):
     if not any(n_clicks_list) or not callback_context.triggered:
         return dash.no_update, dash.no_update
-    
+
     # Get the node ID that was clicked
     button_id = callback_context.triggered[0]['prop_id']
-    node_id = eval(button_id.split('.')[0])['index']  # Extract node ID
-    
-    return {'node': node_id}, '/vitals'
+    try:
+        node_id = eval(button_id.split('.')[0])['index']  # Extract node ID
+    except Exception:
+        return dash.no_update, dash.no_update
+
+    # Determine mine type
+    mine_type = None
+    if pathname == '/open-cast':
+        mine_type = 'open-cast'
+    elif pathname in ('/', '/nodes'):
+        mine_type = 'underground'
+    elif isinstance(mine_type_data, dict) and mine_type_data.get('mineType'):
+        mine_type = mine_type_data['mineType']
+    else:
+        mine_type = 'underground'
+
+    return {'node': node_id, 'mineType': mine_type}, '/vitals'
 
 # Back to zones callback (from nodes page)
 @app.callback(
@@ -3089,6 +3302,35 @@ def reset_checkpoints_on_page_load(pathname, node_data):
 
     # No actual data needed in this store; return dash.no_update to avoid unnecessary writes
     return dash.no_update
+
+
+# Toggle RFID vs GPS visibility on Vitals based on mine type
+@app.callback(
+    [Output('rfid-section', 'style'), Output('gps-section', 'style')],
+    [Input('selected-node-store', 'data'), Input('url', 'pathname')],
+    prevent_initial_call=False
+)
+def toggle_vitals_sections(node_data, pathname):
+    try:
+        mine_type = None
+        if node_data and isinstance(node_data, dict):
+            mine_type = node_data.get('mineType')
+        if not mine_type:
+            if pathname == '/open-cast':
+                mine_type = 'open-cast'
+            else:
+                mine_type = 'underground'
+
+        show = {}
+        hide = {'display': 'none'}
+        if mine_type == 'open-cast':
+            # Show GPS only
+            return hide, show
+        # Default to underground: show RFID only
+        return show, hide
+    except Exception:
+        # Safe fallback: show both if something goes wrong
+        return {}, {}
 
 
 # ---------------------------
