@@ -39,6 +39,15 @@ logging.basicConfig(
 class SensorDataManager:
     """Manages real-time multi-sensor data storage and retrieval"""
     
+    # Topic to Node ID mapping - maps MQTT topics to node IDs
+    TOPIC_TO_NODE_MAP = {
+        'RANJ_2005': '7AA81505',      # RANJHANA
+        'TRISH_2005': '93BA302D',     # TRISHALA
+        'SUSH_2004': 'DB970104',      # SUSHMA
+        'SAM_2006': 'DB970104',       # SAM data to DB970104
+        'LOKI_2004': 'C7761005',      # LOKESH base to C7761005
+    }
+    
 
 
 
@@ -600,6 +609,12 @@ class SensorDataManager:
 
     def __init__(self, max_points=100):
         self.max_points = max_points
+        # Initialize per-node data storage
+        self.per_node_data = {}
+        for node_id in ['C7761005', '93BA302D', '7AA81505', 'DB970104']:
+            self.per_node_data[node_id] = self._create_empty_node_data()
+        
+        # Legacy global data (kept for backward compatibility)
         self.data = {
             'gas_sensors': {
                 'timestamps': deque(maxlen=max_points),
@@ -676,18 +691,52 @@ class SensorDataManager:
         # Track last detected direction per tag ('forward' or 'reverse')
         self._rfid_tag_direction = {}
     
-    def add_gas_data(self, data):
-        """Add new sensor data point"""
+    def _create_empty_node_data(self):
+        """Create an empty data structure for a single node"""
+        return {
+            'gas_sensors': {
+                'timestamps': deque(maxlen=self.max_points),
+                'LPG': deque(maxlen=self.max_points),
+                'CH4': deque(maxlen=self.max_points),
+                'Propane': deque(maxlen=self.max_points),
+                'Butane': deque(maxlen=self.max_points),
+                'H2': deque(maxlen=self.max_points),
+                'latest': {'LPG': 0, 'CH4': 0, 'Propane': 0, 'Butane': 0, 'H2': 0, 'timestamp': None}
+            },
+            'health_sensors': {
+                'timestamps': deque(maxlen=self.max_points),
+                'heartRate': deque(maxlen=self.max_points),
+                'spo2': deque(maxlen=self.max_points),
+                'GSR': deque(maxlen=self.max_points),
+                'stress': deque(maxlen=self.max_points),
+            },
+            'environmental_sensors': {
+                'timestamps': deque(maxlen=self.max_points),
+                'temperature': deque(maxlen=self.max_points),
+                'humidity': deque(maxlen=self.max_points),
+            },
+            'gps_data': {
+                'timestamps': deque(maxlen=self.max_points),
+                'lat': deque(maxlen=self.max_points),
+                'lon': deque(maxlen=self.max_points),
+                'alt': deque(maxlen=self.max_points),
+                'sat': deque(maxlen=self.max_points),
+                'latest': {'lat': 0.0, 'lon': 0.0, 'alt': 0.0, 'sat': 0}
+            }
+        }
+    
+    def add_gas_data(self, data, node_id=None, topic=None):
+        """Add new sensor data point to global storage and per-node storage if node_id provided"""
         with self.lock:
             timestamp = datetime.now()
             
-            # Add gas sensor data
-            self.data['gas_sensors']['timestamps'].append(timestamp)
+            # If topic is provided, map it to node_id
+            if topic and not node_id:
+                node_id = self.TOPIC_TO_NODE_MAP.get(topic)
+            
             # Safe numeric casting helpers (handle strings from publishers)
-
             def _to_float(v, default=0.0):
                 try:
-                    # Treat empty strings/null as default
                     if v is None or (isinstance(v, str) and not v.strip()):
                         return default
                     return float(v)
@@ -698,61 +747,31 @@ class SensorDataManager:
                 try:
                     if v is None or (isinstance(v, str) and not v.strip()):
                         return default
-                    # Some payloads use floats for integer-like values; cast via float->int safely
                     return int(float(v))
                 except Exception:
                     return default
 
-            # Gas sensors
+            # Extract sensor values
             lpg = _to_float(data.get('LPG', 0.0), 0.0)
             ch4 = _to_float(data.get('CH4', 0.0), 0.0)
             propane = _to_float(data.get('Propane', 0.0), 0.0)
             butane = _to_float(data.get('Butane', 0.0), 0.0)
             h2 = _to_float(data.get('H2', 0.0), 0.0)
-            
-            self.data['gas_sensors']['LPG'].append(lpg)
-            self.data['gas_sensors']['CH4'].append(ch4)
-            self.data['gas_sensors']['Propane'].append(propane)
-            self.data['gas_sensors']['Butane'].append(butane)
-            self.data['gas_sensors']['H2'].append(h2)
-            
-            # Add health sensor data
-            self.data['health_sensors']['timestamps'].append(timestamp)
             heartRate = _to_int(data.get('heartRate', -1), -1)
             spo2 = _to_float(data.get('spo2', -1), -1)
             gsr = _to_float(data.get('GSR', 0.0), 0.0)
             stress = _to_int(data.get('stress', 0), 0)
-            
-            self.data['health_sensors']['heartRate'].append(heartRate if heartRate != -1 else None)
-            self.data['health_sensors']['spo2'].append(spo2 if spo2 != -1 else None)
-            self.data['health_sensors']['GSR'].append(gsr)
-            self.data['health_sensors']['stress'].append(stress)
-            
-            # Add environmental sensor data
-            self.data['environmental_sensors']['timestamps'].append(timestamp)
             temperature = _to_float(data.get('temperature', -1.0), -1.0)
             humidity = _to_float(data.get('humidity', -1.0), -1.0)
-            
-            self.data['environmental_sensors']['temperature'].append(temperature if temperature != -1.0 else None)
-            self.data['environmental_sensors']['humidity'].append(humidity if humidity != -1.0 else None)
-            
-            # Add GPS data
-            self.data['gps_data']['timestamps'].append(timestamp)
             lat = _to_float(data.get('lat', 0.0), 0.0)
             lon = _to_float(data.get('lon', 0.0), 0.0)
             alt = _to_float(data.get('alt', 0.0), 0.0)
             sat = _to_int(data.get('sat', 0), 0)
             
-            self.data['gps_data']['lat'].append(lat)
-            self.data['gps_data']['lon'].append(lon)
-            self.data['gps_data']['alt'].append(alt)
-            self.data['gps_data']['sat'].append(sat)
-            
-            # Optional identity/zone metadata if present on the message
+            # Extract metadata
             person_name = data.get('name') or data.get('person') or data.get('user')
             station_id_msg = data.get('station_id')
             zone_from_msg = data.get('zone')
-            # Derive a simple zone label from station id when available (e.g. A1 -> Zone A)
             derived_zone = None
             try:
                 if isinstance(station_id_msg, str) and station_id_msg:
@@ -761,54 +780,85 @@ class SensorDataManager:
                 derived_zone = None
 
             zone_label = zone_from_msg or derived_zone
-
-            # Update latest values with ALL sensor data
-            self.data['gas_sensors']['latest'] = {
-                'LPG': lpg,
-                'CH4': ch4,
-                'Propane': propane,
-                'Butane': butane,
-                'H2': h2,
-                'heartRate': heartRate,
-                'spo2': spo2,
-                'temperature': temperature,
-                'humidity': humidity,
-                'GSR': gsr,
-                'stress': stress,
-                'lat': lat,
-                'lon': lon,
-                'alt': alt,
-                'sat': sat,
-                'name': person_name,
-                'zone': zone_label,
-                'timestamp': timestamp
-            }
             
-            # Update GPS latest
-            self.data['gps_data']['latest'] = {
-                'lat': lat,
-                'lon': lon,
-                'alt': alt,
-                'sat': sat
-            }
+            # Helper function to append data to a data dict
+            def _append_to_data_dict(data_dict):
+                data_dict['gas_sensors']['timestamps'].append(timestamp)
+                data_dict['gas_sensors']['LPG'].append(lpg)
+                data_dict['gas_sensors']['CH4'].append(ch4)
+                data_dict['gas_sensors']['Propane'].append(propane)
+                data_dict['gas_sensors']['Butane'].append(butane)
+                data_dict['gas_sensors']['H2'].append(h2)
+                
+                data_dict['health_sensors']['timestamps'].append(timestamp)
+                data_dict['health_sensors']['heartRate'].append(heartRate if heartRate != -1 else None)
+                data_dict['health_sensors']['spo2'].append(spo2 if spo2 != -1 else None)
+                data_dict['health_sensors']['GSR'].append(gsr)
+                data_dict['health_sensors']['stress'].append(stress)
+                
+                data_dict['environmental_sensors']['timestamps'].append(timestamp)
+                data_dict['environmental_sensors']['temperature'].append(temperature if temperature != -1.0 else None)
+                data_dict['environmental_sensors']['humidity'].append(humidity if humidity != -1.0 else None)
+                
+                data_dict['gps_data']['timestamps'].append(timestamp)
+                data_dict['gps_data']['lat'].append(lat)
+                data_dict['gps_data']['lon'].append(lon)
+                data_dict['gps_data']['alt'].append(alt)
+                data_dict['gps_data']['sat'].append(sat)
+                
+                # Update latest values
+                data_dict['gas_sensors']['latest'] = {
+                    'LPG': lpg, 'CH4': ch4, 'Propane': propane, 'Butane': butane, 'H2': h2,
+                    'heartRate': heartRate, 'spo2': spo2, 'temperature': temperature, 'humidity': humidity,
+                    'GSR': gsr, 'stress': stress, 'lat': lat, 'lon': lon, 'alt': alt, 'sat': sat,
+                    'name': person_name, 'zone': zone_label, 'timestamp': timestamp
+                }
+                
+                data_dict['gps_data']['latest'] = {
+                    'lat': lat, 'lon': lon, 'alt': alt, 'sat': sat
+                }
+            
+            # Add to global data (for backward compatibility)
+            _append_to_data_dict(self.data)
+            
+            # Add to per-node data if node_id is provided
+            if node_id and node_id in self.per_node_data:
+                _append_to_data_dict(self.per_node_data[node_id])
+                logging.info(f"Data added for node {node_id} from topic {topic}: LPG={lpg}, HR={heartRate}")
+            elif node_id:
+                logging.warning(f"Unknown node_id: {node_id}")
             
             try:
                 logging.info(
-                    f"All sensor data updated: Gas={lpg:.2f}, CH4={ch4:.2f}, Propane={propane:.2f}, Butane={butane:.2f}, H2={h2:.2f}; "
+                    f"Sensor data updated: Gas={lpg:.2f}, CH4={ch4:.2f}, Propane={propane:.2f}, Butane={butane:.2f}, H2={h2:.2f}; "
                     f"GPS=({lat:.6f},{lon:.6f}) Alt={alt:.1f} Sat={sat}; Health=HR:{heartRate}, SpO2:{spo2} Temp:{temperature} Hum:{humidity}"
                 )
             except Exception:
-                # Avoid any formatting issues breaking runtime
-                logging.info("All sensor data updated (logging suppressed due to formatting error)")
+                logging.info("Sensor data updated (logging suppressed due to formatting error)")
+
     
     def get_gas_data(self):
         """Get gas sensor data for plotting"""
         with self.lock:
             return self.data['gas_sensors'].copy()
     
+    def get_gas_data_for_node(self, node_id):
+        """Get gas sensor data for a specific node"""
+        with self.lock:
+            if node_id in self.per_node_data:
+                return self.per_node_data[node_id]['gas_sensors'].copy()
+            return self.data['gas_sensors'].copy()  # Fallback to global data
+    
     def get_health_data(self):
         """Get health sensor data for plotting"""
         with self.lock:
+            return self.data['health_sensors'].copy()
+    
+    def get_health_data_for_node(self, node_id):
+        """Get health sensor data for a specific node"""
+        with self.lock:
+            if node_id in self.per_node_data:
+                return self.per_node_data[node_id]['health_sensors'].copy()
             return self.data['health_sensors'].copy()
     
     def get_environmental_data(self):
@@ -816,9 +866,23 @@ class SensorDataManager:
         with self.lock:
             return self.data['environmental_sensors'].copy()
     
+    def get_environmental_data_for_node(self, node_id):
+        """Get environmental sensor data for a specific node"""
+        with self.lock:
+            if node_id in self.per_node_data:
+                return self.per_node_data[node_id]['environmental_sensors'].copy()
+            return self.data['environmental_sensors'].copy()
+    
     def get_gps_data(self):
         """Get GPS data for mapping"""
         with self.lock:
+            return self.data['gps_data'].copy()
+    
+    def get_gps_data_for_node(self, node_id):
+        """Get GPS data for a specific node"""
+        with self.lock:
+            if node_id in self.per_node_data:
+                return self.per_node_data[node_id]['gps_data'].copy()
             return self.data['gps_data'].copy()
     
     def add_rfid_data(self, rfid_data):
@@ -1116,8 +1180,8 @@ class MQTTClient:
                 self.data_manager.add_rfid_data(data)
                 logging.info(f"Processed as RFID: {data}")
             elif isinstance(data, dict):
-                # Regular sensor data
-                self.data_manager.add_gas_data(data)
+                # Regular sensor data - pass topic for node mapping
+                self.data_manager.add_gas_data(data, topic=topic)
                 latest = self.data_manager.get_gas_data().get('latest', {})
                 logging.info(
                     "Updated sensors | LPG=%s CH4=%s Propane=%s Butane=%s H2=%s HR=%s SpO2=%s Temp=%s Hum=%s",
@@ -1129,6 +1193,7 @@ class MQTTClient:
 
         except Exception as e:
             logging.error(f"Error processing message: {e}")
+
     
     def on_disconnect(self, client, userdata, rc):
         self.connected = False
@@ -2450,10 +2515,11 @@ def update_current_values(n):
 
 @app.callback(
     Output('lpg-chart', 'figure'),
-    [Input('interval-component', 'n_intervals')]
+    [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
-def update_lpg_chart(n):
-    gas_data = data_manager.get_gas_data()
+def update_lpg_chart(n, node_data):
+    node_id = node_data if isinstance(node_data, str) else None
+    gas_data = data_manager.get_gas_data_for_node(node_id) if node_id else data_manager.get_gas_data()
     
     fig = go.Figure()
     if gas_data['timestamps'] and gas_data['LPG']:
@@ -2493,10 +2559,11 @@ def update_lpg_chart(n):
 
 @app.callback(
     Output('ch4-chart', 'figure'),
-    [Input('interval-component', 'n_intervals')]
+    [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
-def update_ch4_chart(n):
-    gas_data = data_manager.get_gas_data()
+def update_ch4_chart(n, node_data):
+    node_id = node_data if isinstance(node_data, str) else None
+    gas_data = data_manager.get_gas_data_for_node(node_id) if node_id else data_manager.get_gas_data()
     
     fig = go.Figure()
     if gas_data['timestamps'] and gas_data['CH4']:
@@ -2536,10 +2603,11 @@ def update_ch4_chart(n):
 
 @app.callback(
     Output('propane-chart', 'figure'),
-    [Input('interval-component', 'n_intervals')]
+    [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
-def update_propane_chart(n):
-    gas_data = data_manager.get_gas_data()
+def update_propane_chart(n, node_data):
+    node_id = node_data if isinstance(node_data, str) else None
+    gas_data = data_manager.get_gas_data_for_node(node_id) if node_id else data_manager.get_gas_data()
     
     fig = go.Figure()
     if gas_data['timestamps'] and gas_data['Propane']:
@@ -2579,10 +2647,11 @@ def update_propane_chart(n):
 
 @app.callback(
     Output('butane-chart', 'figure'),
-    [Input('interval-component', 'n_intervals')]
+    [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
-def update_butane_chart(n):
-    gas_data = data_manager.get_gas_data()
+def update_butane_chart(n, node_data):
+    node_id = node_data if isinstance(node_data, str) else None
+    gas_data = data_manager.get_gas_data_for_node(node_id) if node_id else data_manager.get_gas_data()
     
     fig = go.Figure()
     if gas_data['timestamps'] and gas_data['Butane']:
@@ -2622,10 +2691,11 @@ def update_butane_chart(n):
 
 @app.callback(
     Output('h2-chart', 'figure'),
-    [Input('interval-component', 'n_intervals')]
+    [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
-def update_h2_chart(n):
-    gas_data = data_manager.get_gas_data()
+def update_h2_chart(n, node_data):
+    node_id = node_data if isinstance(node_data, str) else None
+    gas_data = data_manager.get_gas_data_for_node(node_id) if node_id else data_manager.get_gas_data()
     
     fig = go.Figure()
     if gas_data['timestamps'] and gas_data['H2']:
@@ -2666,12 +2736,13 @@ def update_h2_chart(n):
 # GPS Map Callback
 @app.callback(
     Output('gps-map', 'figure'),
-    [Input('interval-component', 'n_intervals')]
+    [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
-def update_gps_map(n):
+def update_gps_map(n, node_data):
     """Render GPS map with trail and current location. Clean version (corruption removed)."""
     try:
-        gps_data = data_manager.get_gps_data()
+        node_id = node_data if isinstance(node_data, str) else None
+        gps_data = data_manager.get_gps_data_for_node(node_id) if node_id else data_manager.get_gps_data()
         fig = go.Figure()
         latest = gps_data.get('latest', {})
         current_lat = latest.get('lat', 0.0)
@@ -2756,10 +2827,11 @@ def update_gps_map(n):
 # Health Sensor Charts
 @app.callback(
     Output('heartrate-chart', 'figure'),
-    [Input('interval-component', 'n_intervals')]
+    [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
-def update_heartrate_chart(n):
-    health_data = data_manager.get_health_data()
+def update_heartrate_chart(n, node_data):
+    node_id = node_data if isinstance(node_data, str) else None
+    health_data = data_manager.get_health_data_for_node(node_id) if node_id else data_manager.get_health_data()
     
     fig = go.Figure()
     if health_data['timestamps'] and health_data['heartRate']:
@@ -2803,10 +2875,11 @@ def update_heartrate_chart(n):
 
 @app.callback(
     Output('spo2-chart', 'figure'),
-    [Input('interval-component', 'n_intervals')]
+    [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
-def update_spo2_chart(n):
-    health_data = data_manager.get_health_data()
+def update_spo2_chart(n, node_data):
+    node_id = node_data if isinstance(node_data, str) else None
+    health_data = data_manager.get_health_data_for_node(node_id) if node_id else data_manager.get_health_data()
     
     fig = go.Figure()
     if health_data['timestamps'] and health_data['spo2']:
@@ -2850,10 +2923,11 @@ def update_spo2_chart(n):
 
 @app.callback(
     Output('temperature-chart', 'figure'),
-    [Input('interval-component', 'n_intervals')]
+    [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
-def update_temperature_chart(n):
-    env_data = data_manager.get_environmental_data()
+def update_temperature_chart(n, node_data):
+    node_id = node_data if isinstance(node_data, str) else None
+    env_data = data_manager.get_environmental_data_for_node(node_id) if node_id else data_manager.get_environmental_data()
     
     fig = go.Figure()
     if env_data['timestamps'] and env_data['temperature']:
@@ -2897,10 +2971,11 @@ def update_temperature_chart(n):
 
 @app.callback(
     Output('humidity-chart', 'figure'),
-    [Input('interval-component', 'n_intervals')]
+    [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
-def update_humidity_chart(n):
-    env_data = data_manager.get_environmental_data()
+def update_humidity_chart(n, node_data):
+    node_id = node_data if isinstance(node_data, str) else None
+    env_data = data_manager.get_environmental_data_for_node(node_id) if node_id else data_manager.get_environmental_data()
     
     fig = go.Figure()
     if env_data['timestamps'] and env_data['humidity']:
@@ -2944,10 +3019,11 @@ def update_humidity_chart(n):
 
 @app.callback(
     Output('gsr-chart', 'figure'),
-    [Input('interval-component', 'n_intervals')]
+    [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
-def update_gsr_chart(n):
-    health_data = data_manager.get_health_data()
+def update_gsr_chart(n, node_data):
+    node_id = node_data if isinstance(node_data, str) else None
+    health_data = data_manager.get_health_data_for_node(node_id) if node_id else data_manager.get_health_data()
     
     fig = go.Figure()
     if health_data['timestamps'] and health_data['GSR']:
