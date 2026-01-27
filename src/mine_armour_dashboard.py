@@ -26,6 +26,9 @@ import dash_bootstrap_components as dbc
 import dash
 from dash.exceptions import PreventUpdate
 
+# Twilio for SMS alerts
+from twilio.rest import Client
+
 # Load environment variables
 from dotenv import load_dotenv
 load_dotenv()
@@ -35,6 +38,30 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+
+# SMS Alert Configuration
+TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
+TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
+TWILIO_PHONE_NUMBER = os.getenv('TWILIO_PHONE_NUMBER')
+ALERT_PHONE_NUMBER = os.getenv('ALERT_PHONE_NUMBER')
+
+# Initialize Twilio client if credentials are available
+twilio_client = None
+if all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER, ALERT_PHONE_NUMBER]):
+    try:
+        twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        logging.info("✅ Twilio SMS client initialized successfully")
+        logging.info(f"📱 Twilio FROM number: {TWILIO_PHONE_NUMBER}")
+        logging.info(f"📱 Alert TO number: {ALERT_PHONE_NUMBER}")
+    except Exception as e:
+        logging.error(f"❌ Failed to initialize Twilio client: {e}")
+else:
+    missing = []
+    if not TWILIO_ACCOUNT_SID: missing.append("TWILIO_ACCOUNT_SID")
+    if not TWILIO_AUTH_TOKEN: missing.append("TWILIO_AUTH_TOKEN") 
+    if not TWILIO_PHONE_NUMBER: missing.append("TWILIO_PHONE_NUMBER")
+    if not ALERT_PHONE_NUMBER: missing.append("ALERT_PHONE_NUMBER")
+    logging.warning(f"⚠️ Twilio credentials missing: {missing}. SMS alerts disabled.")
 
 class SensorDataManager:
     """Manages real-time multi-sensor data storage and retrieval"""
@@ -1085,6 +1112,54 @@ class SensorDataManager:
             
             return status
 
+
+def send_sms_alert(alert_entry):
+    """Send SMS alert using Twilio"""
+    global twilio_client
+    
+    if not twilio_client:
+        logging.warning("⚠️ SMS alert skipped - Twilio client not initialized")
+        return False
+    
+    try:
+        # Format SMS message with alert details
+        message_body = f"""🛡 MINE ARMOUR ALERT 🛡
+
+⚠️ {alert_entry['type']}: {alert_entry['message']}
+
+👤 User: {alert_entry['user']}
+📍 Zone: {alert_entry['zone']}
+🔗 Node: {alert_entry['node']}
+🕐 Time: {alert_entry['ts'][:19]}
+
+Immediate action required!"""
+
+        logging.info(f"📤 Attempting to send SMS...")
+        logging.info(f"📱 FROM: {TWILIO_PHONE_NUMBER}")
+        logging.info(f"📱 TO: {ALERT_PHONE_NUMBER}")
+        logging.info(f"📄 Message: {alert_entry['message']}")
+
+        # Send SMS
+        message = twilio_client.messages.create(
+            body=message_body,
+            from_=TWILIO_PHONE_NUMBER,
+            to=ALERT_PHONE_NUMBER
+        )
+        
+        logging.info(f"✅ SMS alert sent successfully! Message SID: {message.sid}")
+        logging.info(f"📊 Status: {message.status}")
+        return True
+        
+    except Exception as e:
+        logging.error(f"❌ Failed to send SMS alert: {e}")
+        logging.error(f"❌ Error type: {type(e).__name__}")
+        if "not a valid phone number" in str(e):
+            logging.error(f"❌ Phone number format issue - FROM: {TWILIO_PHONE_NUMBER}, TO: {ALERT_PHONE_NUMBER}")
+        elif "not verified" in str(e):
+            logging.error(f"❌ Phone number not verified in Twilio account: {TWILIO_PHONE_NUMBER}")
+        return False
+
+
 class MQTTClient:
     """MQTT client for receiving gas sensor data"""
     
@@ -1289,48 +1364,6 @@ def rfid_counters():
     except Exception as e:
         logging.error(f"Error returning rfid counters: {e}")
         return ("Internal Error", 500)
-
-# Simple helper endpoint to simulate heart-rate messages for testing alerts
-# Example: GET /simulate_hr?hr=105&name=Test%20User&station=A1
-@app.server.route('/simulate_hr', methods=['GET'])
-def simulate_hr():
-    try:
-        hr_str = request.args.get('hr')
-        if hr_str is None:
-            return ("Missing hr query parameter", 400)
-        try:
-            hr = float(hr_str)
-        except ValueError:
-            return ("Invalid hr value", 400)
-
-        name = request.args.get('name') or 'Test User'
-        station = request.args.get('station') or 'A1'
-
-        payload = {
-            'heartRate': hr,
-            'spo2': 98,
-            'name': name,
-            'station_id': station,
-            'temperature': 26.7,
-            'humidity': 68.0,
-            'LPG': 0,
-            'CH4': 0,
-            'Propane': 0,
-            'Butane': 0,
-            'H2': 0,
-            'GSR': 0,
-            'stress': 0,
-            'lat': 0.0,
-            'lon': 0.0,
-            'alt': 0.0,
-            'sat': 0,
-        }
-        data_manager.add_gas_data(payload)
-        return ("OK", 200)
-    except Exception as e:
-        logging.error(f"Error in simulate_hr: {e}")
-        return ("Internal Error", 500)
-
 # Custom CSS styling with darker red-black gradient theme
 custom_style = {
     'backgroundColor': '#000000',
@@ -3419,32 +3452,18 @@ def toggle_vitals_sections(node_data, pathname):
     prevent_initial_call=True
 )
 def monitor_alerts(n, alerts_data, zone_data, node_data):
-    """Check latest heart rate and append alert when out of safe range (<20 or >80 BPM)."""
+    """Enhanced alert monitoring with SMS notifications for heart rate and gas sensor data"""
     try:
         if alerts_data is None:
             alerts = []
         else:
             alerts = list(alerts_data)
 
-        # Prefer heartRate from gas latest; fall back to last valid in health series
+        # Get latest sensor data
         latest = data_manager.get_gas_data().get('latest', {})
-        hr = latest.get('heartRate', None)
-        if hr is None:
-            try:
-                health = data_manager.get_health_data()
-                if health and health.get('heartRate'):
-                    # pick last non-None
-                    for v in reversed(list(health['heartRate'])):
-                        if v is not None:
-                            hr = v
-                            break
-            except Exception:
-                pass
-
-        # Log evaluation context for diagnostics - ALWAYS log to see if callback is running
-        logging.info(f"Alert monitor running: HR={hr}, n={n}, num_alerts={len(alerts)}")
-
-        # Determine zone and node for context
+        gas_data = data_manager.get_gas_data()
+        
+        # Determine zone, node, and user context
         zone = (latest.get('zone') or (zone_data.get('zone') if zone_data else None))
         if not zone:
             try:
@@ -3456,7 +3475,8 @@ def monitor_alerts(n, alerts_data, zone_data, node_data):
                 zone = None
         zone = zone or 'Unknown'
         node = node_data.get('node') if node_data else 'Unknown'
-        # Prefer user name from latest payload; fall back to last RFID 'latest_name'
+        
+        # Get user name
         user = latest.get('name') or latest.get('person')
         if not user:
             try:
@@ -3465,38 +3485,124 @@ def monitor_alerts(n, alerts_data, zone_data, node_data):
             except Exception:
                 user = 'Unknown'
 
-        # Only trigger when we have a numeric HR reading (> 0) and it's out of range per new thresholds
-        # Treat 0 or negative as "no reading" to avoid spurious alerts from missing sensors
-        if hr is not None and isinstance(hr, (int, float)) and hr > 0 and (hr < 20 or hr > 80):
-            if hr < 20:
-                issue = f"Low heart rate ({hr} BPM < 20)"
+        new_alerts = []
+
+        # --- HEART RATE MONITORING ---
+        hr = latest.get('heartRate', None)
+        if hr is None:
+            try:
+                health = data_manager.get_health_data()
+                if health and health.get('heartRate'):
+                    for v in reversed(list(health['heartRate'])):
+                        if v is not None:
+                            hr = v
+                            break
+            except Exception:
+                pass
+
+        if hr is not None and isinstance(hr, (int, float)) and hr > 0 and ((hr >= 10 and hr <= 70) or hr > 100):
+            if hr >= 10 and hr <= 70:
+                issue = f"Abnormal heart rate ({hr} BPM in danger zone 10-70)"
             else:
-                issue = f"High heart rate ({hr} BPM > 80)"
+                issue = f"High heart rate ({hr} BPM > 100)"
             
-            logging.info(f"🚨 Alert triggered: {issue} — User: {user}, Zone: {zone}, Node: {node}")
-            # Avoid spamming duplicate alerts by ensuring latest alert timestamp differs
-            now = datetime.now()
             alert_entry = {
-                'ts': now.isoformat(),
+                'ts': datetime.now().isoformat(),
                 'type': 'HEART_RATE',
                 'message': issue,
                 'zone': zone,
                 'node': node,
                 'user': user
             }
+            new_alerts.append(alert_entry)
 
-            # If last alert is identical in message and node within 5 seconds, skip
-            if not alerts:
-                alerts.append(alert_entry)
+        # --- TEMPERATURE MONITORING ---
+        temperature = latest.get('temperature', None)
+        if temperature is None:
+            try:
+                env_data = data_manager.get_environmental_data()
+                if env_data and env_data.get('temperature'):
+                    for v in reversed(list(env_data['temperature'])):
+                        if v is not None:
+                            temperature = v
+                            break
+            except Exception:
+                pass
+
+        if temperature is not None and isinstance(temperature, (int, float)) and (temperature < 22 or temperature > 28):
+            if temperature < 22:
+                issue = f"Low temperature ({temperature}°C < 22°C)"
             else:
+                issue = f"High temperature ({temperature}°C > 28°C)"
+            
+            alert_entry = {
+                'ts': datetime.now().isoformat(),
+                'type': 'TEMPERATURE',
+                'message': issue,
+                'zone': zone,
+                'node': node,
+                'user': user
+            }
+            new_alerts.append(alert_entry)
+
+        # --- GAS SENSOR MONITORING ---
+        # Define danger thresholds (PPM)
+        gas_thresholds = {
+            'LPG': 1000,      # Explosive at 2-10%, dangerous at 1000+ ppm
+            'CH4': 5000,      # Explosive at 5-15%, dangerous at 5000+ ppm  
+            'Propane': 1000,  # Explosive at 2-10%, dangerous at 1000+ ppm
+            'Butane': 1000,   # Explosive at 1.5-9%, dangerous at 1000+ ppm
+            'H2': 4000        # Explosive at 4-75%, dangerous at 4000+ ppm
+        }
+
+        # Check each gas sensor
+        for gas_type, threshold in gas_thresholds.items():
+            gas_value = latest.get(gas_type)
+            if gas_value is not None and isinstance(gas_value, (int, float)) and gas_value > threshold:
+                alert_entry = {
+                    'ts': datetime.now().isoformat(),
+                    'type': 'GAS_DANGER',
+                    'message': f"Dangerous {gas_type} levels ({gas_value:.1f} ppm > {threshold} ppm)",
+                    'zone': zone,
+                    'node': node,
+                    'user': user
+                }
+                new_alerts.append(alert_entry)
+
+        # --- PROCESS NEW ALERTS ---
+        for alert_entry in new_alerts:
+            # Check for duplicates (same type, node, and recent timestamp)
+            is_duplicate = False
+            now = datetime.fromisoformat(alert_entry['ts'])
+            
+            for existing_alert in alerts:
                 try:
-                    last_ts = datetime.fromisoformat(alerts[-1]['ts'])
-                    if not (alerts[-1]['type'] == alert_entry['type'] and alerts[-1]['node'] == alert_entry['node'] and alerts[-1]['message'] == alert_entry['message'] and (last_ts > now - timedelta(seconds=5))):
-                        alerts.append(alert_entry)
+                    existing_ts = datetime.fromisoformat(existing_alert['ts'])
+                    if (existing_alert['type'] == alert_entry['type'] and 
+                        existing_alert['node'] == alert_entry['node'] and 
+                        existing_alert['message'] == alert_entry['message'] and 
+                        (now - existing_ts).total_seconds() < 30):  # 30 second cooldown
+                        is_duplicate = True
+                        break
                 except Exception:
-                    alerts.append(alert_entry)
+                    continue
+            
+            if not is_duplicate:
+                alerts.append(alert_entry)
+                logging.info(f"🚨 New alert: {alert_entry['type']} - {alert_entry['message']} (User: {user}, Zone: {zone}, Node: {node})")
+                
+                # Send SMS for new alert
+                try:
+                    send_sms_alert(alert_entry)
+                except Exception as sms_error:
+                    logging.error(f"SMS sending failed for alert: {sms_error}")
+
+        # Log current monitoring status
+        temp_display = f"{temperature}°C" if temperature is not None else "N/A"
+        logging.info(f"Alert monitor: HR={hr}, TEMP={temp_display}, Active alerts={len(alerts)}, New alerts={len(new_alerts)}")
 
         return alerts
+        
     except Exception as e:
         logging.error(f"Error in monitor_alerts: {e}")
         return dash.no_update
