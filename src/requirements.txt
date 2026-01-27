@@ -1,5 +1,5 @@
 bleak  # No version currently supports Python 3.13 as of September 2025. Remove or update when available.
-bleak-winrt==1.2.0
+
 contourpy==1.2.0
 cycler==0.12.1
 filterpy==1.4.5
