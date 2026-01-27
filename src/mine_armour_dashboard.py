@@ -1169,7 +1169,7 @@ class MQTTClient:
         self.connected = False
         
         # MQTT Configuration from environment
-        self.mqtt_host = os.getenv("MQTT_HOST")
+        self.mqtt_host = os.getenv("MQTT_HOST", "t5066166.ala.asia-southeast1.emqxsl.com")
         self.mqtt_port = int(os.getenv("MQTT_PORT", 8883))
         self.mqtt_username = os.getenv("MQTT_USERNAME")
         self.mqtt_password = os.getenv("MQTT_PASSWORD")
@@ -3803,7 +3803,16 @@ if __name__ == '__main__':
         print("📍 GPS: Location tracking")
 
         # Run the dashboard (disable dev tools UI/hot-reload in production to remove debug overlay)
-        app.run_server(debug=False, dev_tools_ui=False, dev_tools_hot_reload=False, host='0.0.0.0', port=8050)
+        port = int(os.environ.get("PORT", 8050))
+
+app.run_server(
+    debug=False,
+    dev_tools_ui=False,
+    dev_tools_hot_reload=False,
+    host='0.0.0.0',
+    port=port
+)
+
 
     except KeyboardInterrupt:
         print("\n🛑 Shutting down Mine Armour Dashboard...")
