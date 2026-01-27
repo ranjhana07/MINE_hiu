@@ -66,13 +66,13 @@ else:
 class SensorDataManager:
     """Manages real-time multi-sensor data storage and retrieval"""
     
-    # Topic to Node ID mapping - maps MQTT topics to node IDs
+    # Topic to Node ID mapping - maps MQTT topics to lists of node IDs
     TOPIC_TO_NODE_MAP = {
-        'RANJ_2005': '7AA81505',      # RANJHANA
-        'TRISH_2005': '93BA302D',     # TRISHALA
-        'SUSH_2004': 'DB970104',      # SUSHMA
-        'SAM_2006': 'DB970104',       # SAM data to DB970104
-        'LOKI_2004': 'C7761005',      # LOKESH base to C7761005
+        'LOKI_2004': ['93BA302D', 'DB970104'],  # LOKI → Trishala & Sushma
+        'RANJ_2005': ['C7761005', '7AA81505'],  # RANJ → Lokesh & Ranjana
+        'TRISH_2005': ['C7761005', '7AA81505'], # TRISH → Lokesh & Ranjana
+        'SUSH_2004': ['C7761005', '7AA81505'],  # SUSH → Lokesh & Ranjana
+        'SAM_2006': ['C7761005', '7AA81505'],   # SAM → Lokesh & Ranjana
     }
     
 
@@ -728,7 +728,7 @@ class SensorDataManager:
                 'Propane': deque(maxlen=self.max_points),
                 'Butane': deque(maxlen=self.max_points),
                 'H2': deque(maxlen=self.max_points),
-                'latest': {'LPG': 0, 'CH4': 0, 'Propane': 0, 'Butane': 0, 'H2': 0, 'timestamp': None}
+                'latest': None  # None means no data received yet
             },
             'health_sensors': {
                 'timestamps': deque(maxlen=self.max_points),
@@ -748,8 +748,9 @@ class SensorDataManager:
                 'lon': deque(maxlen=self.max_points),
                 'alt': deque(maxlen=self.max_points),
                 'sat': deque(maxlen=self.max_points),
-                'latest': {'lat': 0.0, 'lon': 0.0, 'alt': 0.0, 'sat': 0}
-            }
+                'latest': None  # None means no data received yet
+            },
+            'has_data': False  # Track if any data has been received for this node
         }
     
     def add_gas_data(self, data, node_id=None, topic=None):
@@ -757,9 +758,13 @@ class SensorDataManager:
         with self.lock:
             timestamp = datetime.now()
             
-            # If topic is provided, map it to node_id
+            # If topic is provided, map it to node_id(s)
+            node_ids = []
             if topic and not node_id:
-                node_id = self.TOPIC_TO_NODE_MAP.get(topic)
+                mapped = self.TOPIC_TO_NODE_MAP.get(topic, [])
+                node_ids = mapped if isinstance(mapped, list) else [mapped]
+            elif node_id:
+                node_ids = [node_id]
             
             # Safe numeric casting helpers (handle strings from publishers)
             def _to_float(v, default=0.0):
@@ -848,12 +853,14 @@ class SensorDataManager:
             # Add to global data (for backward compatibility)
             _append_to_data_dict(self.data)
             
-            # Add to per-node data if node_id is provided
-            if node_id and node_id in self.per_node_data:
-                _append_to_data_dict(self.per_node_data[node_id])
-                logging.info(f"Data added for node {node_id} from topic {topic}: LPG={lpg}, HR={heartRate}")
-            elif node_id:
-                logging.warning(f"Unknown node_id: {node_id}")
+            # Add to per-node data for all mapped nodes
+            for nid in node_ids:
+                if nid in self.per_node_data:
+                    _append_to_data_dict(self.per_node_data[nid])
+                    self.per_node_data[nid]['has_data'] = True  # Mark that this node has received data
+                    logging.info(f"✅ Data added for node {nid} from topic {topic}: CH4={ch4:.2f}, LPG={lpg:.2f}, has_data={self.per_node_data[nid]['has_data']}")
+                else:
+                    logging.warning(f"❌ Unknown node_id: {nid}")
             
             try:
                 logging.info(
@@ -1174,38 +1181,15 @@ class MQTTClient:
         self.mqtt_username = os.getenv("MQTT_USERNAME")
         self.mqtt_password = os.getenv("MQTT_PASSWORD")
         
-        # MQTT Topics (from env with default)
-        # Primary topic as configured
-        self.gas_topic = os.getenv("MQTT_TOPIC_1", "LOKI_2004")
+        # MQTT Topics - Subscribe to ALL topics from TOPIC_TO_NODE_MAP
+        # This ensures all sensor data from all topics is received
+        self.subscribe_topics = list(SensorDataManager.TOPIC_TO_NODE_MAP.keys())
+        
+        logging.info(f"Configured to subscribe to topics: {self.subscribe_topics}")
+        
+        # RFID topic for checkpoint tracking
         self.rfid_topic = "rfid"
-
-        # Allow subscribing to multiple topic aliases to avoid env typos/mismatches.
-        # You can override via CSV env `MQTT_TOPICS`, otherwise we add sensible aliases
-        # derived from `MQTT_TOPIC_1` (with/without underscore, common LOKI/LOKL typo).
-        topics_csv = os.getenv("MQTT_TOPICS")
-        aliases = set()
-        try:
-            base = (self.gas_topic or "").strip()
-            if base:
-                aliases.add(base)
-                # Remove underscores
-                aliases.add(base.replace("_", ""))
-                # Add with underscore if missing
-                if "_" not in base and len(base) > 4:
-                    aliases.add(base[:4] + "_" + base[4:])
-                # Common typo: I ↔ L in LOKI/LOKL
-                aliases.add(base.replace("LOKI", "LOKL"))
-                aliases.add(base.replace("LOKL", "LOKI"))
-            # If MQTT_TOPICS provided, merge those
-            if topics_csv:
-                for t in topics_csv.split(','):
-                    t = t.strip()
-                    if t:
-                        aliases.add(t)
-        except Exception:
-            aliases.add(self.gas_topic)
-        # Final ordered list of topics to subscribe
-        self.subscribe_topics = sorted(aliases)
+        
         # Control whether RFID-like payloads on the gas topic should be treated as RFID
         # Default OFF to ensure only explicit RFID topic affects checkpoints
         self.allow_rfid_on_gas = os.getenv("ALLOW_RFID_ON_GAS", "false").lower() != 'false'
@@ -1629,10 +1613,10 @@ def nodes_layout(zone_name):
     # Use the same primary 4 named nodes across all zones so Zone B/C/D show the
     # same node cards as Zone A (matches the RFID/node mapping used elsewhere).
     primary_nodes = [
-        {'id': 'C7761005', 'name': 'NODE C7761005 - SUSHMA', 'status': 'Active'},
-        {'id': '93BA302D', 'name': 'NODE 93BA302D - TRISHALA', 'status': 'Active'},
-        {'id': '7AA81505', 'name': 'NODE 7AA81505 - RANJHANA', 'status': 'Active'},
-        {'id': 'DB970104', 'name': 'NODE DB970104 - LOKESH', 'status': 'Active'}
+        {'id': 'C7761005', 'name': 'LOKESH (RANJ_2005 Data)', 'status': 'Active'},
+        {'id': '93BA302D', 'name': 'TRISHALA (LOKI_2004 Data)', 'status': 'Active'},
+        {'id': '7AA81505', 'name': 'RANJHANA (RANJ_2005 Data)', 'status': 'Active'},
+        {'id': 'DB970104', 'name': 'SUSHMA (LOKI_2004 Data)', 'status': 'Active'}
     ]
 
     zone_nodes = {
@@ -1750,10 +1734,10 @@ def mine_choice_layout():
 def open_cast_layout():
     # Reuse primary nodes as users on Open Cast page
     primary_nodes = [
-        {'id': 'C7761005', 'name': 'USER SUSHMA', 'status': 'Active'},
-        {'id': '93BA302D', 'name': 'USER TRISHALA', 'status': 'Active'},
-        {'id': '7AA81505', 'name': 'USER RANJHANA', 'status': 'Active'},
-        {'id': 'DB970104', 'name': 'USER LOKESH', 'status': 'Active'}
+        {'id': 'C7761005', 'name': 'LOKESH (RANJ_2005)', 'status': 'Active'},
+        {'id': '93BA302D', 'name': 'TRISHALA (LOKI_2004)', 'status': 'Active'},
+        {'id': '7AA81505', 'name': 'RANJHANA (RANJ_2005)', 'status': 'Active'},
+        {'id': 'DB970104', 'name': 'SUSHMA (LOKI_2004)', 'status': 'Active'}
     ]
 
     node_cards = []
@@ -2488,21 +2472,42 @@ def render_open_cast_alerts(alerts_data, clear_clicks):
         Output('gps-alt', 'children'),
         Output('gps-sat', 'children'),
     ],
-    Input('interval-component', 'n_intervals')
+    [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
-def update_current_values(n):
+def update_current_values(n, node_data):
     try:
         from datetime import datetime
+        
+        # Debug logging
+        logging.info(f"🔍 update_current_values called: node_data={node_data}, type={type(node_data)}")
         
         # Connection status
         status = "Connected" if mqtt_client.connected else "Disconnected"
         
-        # Get latest gas sensor values
-        gas_data = data_manager.get_gas_data()
-        gps_data = data_manager.get_gps_data()
+        # Get node ID if available
+        node_id = node_data.get('node_id') if node_data else None
+        logging.info(f"🔍 Extracted node_id: {node_id}")
+        
+        # Get latest gas sensor values (node-specific if node is selected)
+        if node_id:
+            node_storage = data_manager.per_node_data.get(node_id, {})
+            # Check if this node has received any data
+            if not node_storage.get('has_data', False):
+                # No data received for this node yet - show all "---"
+                now = datetime.now()
+                last_update = now.strftime("%H:%M:%S")
+                return ["Connected", "---", "---", "---", "---", "---", f"Waiting for data... {last_update}",
+                        "---", "---", "---", "---", "---", "LOW",
+                        "---", "---", "---", "0"]
+            
+            gas_data = data_manager.get_gas_data_for_node(node_id)
+            gps_data = data_manager.get_gps_data_for_node(node_id)
+        else:
+            gas_data = data_manager.get_gas_data()
+            gps_data = data_manager.get_gps_data()
         
         # Format gas sensor values with better error handling
-        latest = gas_data.get('latest', {})
+        latest = gas_data.get('latest', {}) if gas_data else {}
         lpg_val = f"{latest.get('LPG', 0):.2f}" if latest.get('LPG') is not None else "---"
         ch4_val = f"{latest.get('CH4', 0):.2f}" if latest.get('CH4') is not None else "---"
         propane_val = f"{latest.get('Propane', 0):.2f}" if latest.get('Propane') is not None else "---"
@@ -2551,7 +2556,21 @@ def update_current_values(n):
     [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
 def update_lpg_chart(n, node_data):
-    node_id = node_data if isinstance(node_data, str) else None
+    node_id = node_data.get('node_id') if node_data else None
+    
+    # Check if node has received data
+    if node_id:
+        node_storage = data_manager.per_node_data.get(node_id, {})
+        if not node_storage.get('has_data', False):
+            # Return empty chart
+            fig = go.Figure()
+            fig.update_layout(
+                title={'text': "🔥 LPG Gas Sensor - Waiting for data...", 'x': 0.5, 'font': {'color': '#FFFFFF', 'size': 16}},
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,0,0,0.3)', font={'color': '#FFFFFF'},
+                height=300
+            )
+            return fig
+    
     gas_data = data_manager.get_gas_data_for_node(node_id) if node_id else data_manager.get_gas_data()
     
     fig = go.Figure()
@@ -2595,7 +2614,11 @@ def update_lpg_chart(n, node_data):
     [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
 def update_ch4_chart(n, node_data):
-    node_id = node_data if isinstance(node_data, str) else None
+    node_id = node_data.get('node_id') if node_data else None
+    if node_id and not data_manager.per_node_data.get(node_id, {}).get('has_data', False):
+        fig = go.Figure()
+        fig.update_layout(title={'text': "💨 CH4 - Waiting for data...", 'x': 0.5, 'font': {'color': '#FFFFFF', 'size': 16}}, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,0,0,0.3)', font={'color': '#FFFFFF'}, height=300)
+        return fig
     gas_data = data_manager.get_gas_data_for_node(node_id) if node_id else data_manager.get_gas_data()
     
     fig = go.Figure()
@@ -2639,7 +2662,11 @@ def update_ch4_chart(n, node_data):
     [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
 def update_propane_chart(n, node_data):
-    node_id = node_data if isinstance(node_data, str) else None
+    node_id = node_data.get('node_id') if node_data else None
+    if node_id and not data_manager.per_node_data.get(node_id, {}).get('has_data', False):
+        fig = go.Figure()
+        fig.update_layout(title={'text': "⛽ Propane - Waiting for data...", 'x': 0.5, 'font': {'color': '#FFFFFF', 'size': 16}}, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,0,0,0.3)', font={'color': '#FFFFFF'}, height=300)
+        return fig
     gas_data = data_manager.get_gas_data_for_node(node_id) if node_id else data_manager.get_gas_data()
     
     fig = go.Figure()
@@ -2683,7 +2710,11 @@ def update_propane_chart(n, node_data):
     [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
 def update_butane_chart(n, node_data):
-    node_id = node_data if isinstance(node_data, str) else None
+    node_id = node_data.get('node_id') if node_data else None
+    if node_id and not data_manager.per_node_data.get(node_id, {}).get('has_data', False):
+        fig = go.Figure()
+        fig.update_layout(title={'text': "🧪 Butane - Waiting for data...", 'x': 0.5, 'font': {'color': '#FFFFFF', 'size': 16}}, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,0,0,0.3)', font={'color': '#FFFFFF'}, height=300)
+        return fig
     gas_data = data_manager.get_gas_data_for_node(node_id) if node_id else data_manager.get_gas_data()
     
     fig = go.Figure()
@@ -2727,7 +2758,11 @@ def update_butane_chart(n, node_data):
     [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
 def update_h2_chart(n, node_data):
-    node_id = node_data if isinstance(node_data, str) else None
+    node_id = node_data.get('node_id') if node_data else None
+    if node_id and not data_manager.per_node_data.get(node_id, {}).get('has_data', False):
+        fig = go.Figure()
+        fig.update_layout(title={'text': "💡 H2 - Waiting for data...", 'x': 0.5, 'font': {'color': '#FFFFFF', 'size': 16}}, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,0,0,0.3)', font={'color': '#FFFFFF'}, height=300)
+        return fig
     gas_data = data_manager.get_gas_data_for_node(node_id) if node_id else data_manager.get_gas_data()
     
     fig = go.Figure()
@@ -2774,7 +2809,15 @@ def update_h2_chart(n, node_data):
 def update_gps_map(n, node_data):
     """Render GPS map with trail and current location. Clean version (corruption removed)."""
     try:
-        node_id = node_data if isinstance(node_data, str) else None
+        node_id = node_data.get('node_id') if node_data else None
+        if node_id and not data_manager.per_node_data.get(node_id, {}).get('has_data', False):
+            fig = go.Figure(go.Scattermapbox())
+            fig.update_layout(
+                title={'text': "📍 GPS - Waiting for data...", 'x': 0.5, 'font': {'color': '#FFFFFF'}},
+                mapbox_style="carto-darkmatter", height=400, 
+                paper_bgcolor='rgba(0,0,0,0)', font={'color': '#FFFFFF'}
+            )
+            return fig
         gps_data = data_manager.get_gps_data_for_node(node_id) if node_id else data_manager.get_gps_data()
         fig = go.Figure()
         latest = gps_data.get('latest', {})
@@ -2863,7 +2906,11 @@ def update_gps_map(n, node_data):
     [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
 def update_heartrate_chart(n, node_data):
-    node_id = node_data if isinstance(node_data, str) else None
+    node_id = node_data.get('node_id') if node_data else None
+    if node_id and not data_manager.per_node_data.get(node_id, {}).get('has_data', False):
+        fig = go.Figure()
+        fig.update_layout(title={'text': "❤️ Heart Rate - Waiting for data...", 'x': 0.5, 'font': {'color': '#FFFFFF', 'size': 14}}, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,0,0,0.3)', font={'color': '#FFFFFF'}, height=250)
+        return fig
     health_data = data_manager.get_health_data_for_node(node_id) if node_id else data_manager.get_health_data()
     
     fig = go.Figure()
@@ -2911,7 +2958,11 @@ def update_heartrate_chart(n, node_data):
     [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
 def update_spo2_chart(n, node_data):
-    node_id = node_data if isinstance(node_data, str) else None
+    node_id = node_data.get('node_id') if node_data else None
+    if node_id and not data_manager.per_node_data.get(node_id, {}).get('has_data', False):
+        fig = go.Figure()
+        fig.update_layout(title={'text': "🫁 SpO2 - Waiting for data...", 'x': 0.5, 'font': {'color': '#FFFFFF', 'size': 14}}, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,0,0,0.3)', font={'color': '#FFFFFF'}, height=300)
+        return fig
     health_data = data_manager.get_health_data_for_node(node_id) if node_id else data_manager.get_health_data()
     
     fig = go.Figure()
@@ -2959,7 +3010,11 @@ def update_spo2_chart(n, node_data):
     [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
 def update_temperature_chart(n, node_data):
-    node_id = node_data if isinstance(node_data, str) else None
+    node_id = node_data.get('node_id') if node_data else None
+    if node_id and not data_manager.per_node_data.get(node_id, {}).get('has_data', False):
+        fig = go.Figure()
+        fig.update_layout(title={'text': "🌡️ Temperature - Waiting for data...", 'x': 0.5, 'font': {'color': '#FFFFFF', 'size': 14}}, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,0,0,0.3)', font={'color': '#FFFFFF'}, height=300)
+        return fig
     env_data = data_manager.get_environmental_data_for_node(node_id) if node_id else data_manager.get_environmental_data()
     
     fig = go.Figure()
@@ -3007,7 +3062,11 @@ def update_temperature_chart(n, node_data):
     [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
 def update_humidity_chart(n, node_data):
-    node_id = node_data if isinstance(node_data, str) else None
+    node_id = node_data.get('node_id') if node_data else None
+    if node_id and not data_manager.per_node_data.get(node_id, {}).get('has_data', False):
+        fig = go.Figure()
+        fig.update_layout(title={'text': "💧 Humidity - Waiting for data...", 'x': 0.5, 'font': {'color': '#FFFFFF', 'size': 14}}, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,0,0,0.3)', font={'color': '#FFFFFF'}, height=300)
+        return fig
     env_data = data_manager.get_environmental_data_for_node(node_id) if node_id else data_manager.get_environmental_data()
     
     fig = go.Figure()
@@ -3055,7 +3114,11 @@ def update_humidity_chart(n, node_data):
     [Input('interval-component', 'n_intervals'), Input('selected-node-store', 'data')]
 )
 def update_gsr_chart(n, node_data):
-    node_id = node_data if isinstance(node_data, str) else None
+    node_id = node_data.get('node_id') if node_data else None
+    if node_id and not data_manager.per_node_data.get(node_id, {}).get('has_data', False):
+        fig = go.Figure()
+        fig.update_layout(title={'text': "🖐️ GSR - Waiting for data...", 'x': 0.5, 'font': {'color': '#FFFFFF', 'size': 14}}, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,0,0,0.3)', font={'color': '#FFFFFF'}, height=300)
+        return fig
     health_data = data_manager.get_health_data_for_node(node_id) if node_id else data_manager.get_health_data()
     
     fig = go.Figure()
@@ -3796,23 +3859,22 @@ if __name__ == '__main__':
         print("🛡 Starting Mine Armour Multi-Sensor Dashboard...")
         print("📊 Dashboard will be available at: http://localhost:8050")
         print("🔄 Real-time updates every second")
-        print(f"📡 MQTT Topic: {mqtt_client.gas_topic} (Multi-Sensor Data)")
+        print(f"📡 MQTT Topics: {', '.join(mqtt_client.subscribe_topics)} (Multi-Sensor Data)")
         print("🔥 Gas Sensors: LPG, CH4, Propane, Butane, H2")
         print("❤ Health Sensors: Heart Rate, SpO2, GSR, Stress")
         print("🌡 Environment: Temperature, Humidity")
-        print("📍 GPS: Location tracking")
+        print("📍 GPS & RFID: Location & Checkpoint tracking")
 
         # Run the dashboard (disable dev tools UI/hot-reload in production to remove debug overlay)
         port = int(os.environ.get("PORT", 8050))
 
-app.run_server(
-    debug=False,
-    dev_tools_ui=False,
-    dev_tools_hot_reload=False,
-    host='0.0.0.0',
-    port=port
-)
-
+        app.run_server(
+            debug=False,
+            dev_tools_ui=False,
+            dev_tools_hot_reload=False,
+            host='0.0.0.0',
+            port=port
+        )
 
     except KeyboardInterrupt:
         print("\n🛑 Shutting down Mine Armour Dashboard...")

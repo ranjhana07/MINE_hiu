@@ -26,8 +26,16 @@ port = int(os.getenv("MQTT_PORT", "8883"))
 mqtt_username = os.getenv("MQTT_USERNAME")
 mqtt_password = os.getenv("MQTT_PASSWORD")
 
-# MQTT topic for gas sensor data
-mqtt_topic = os.getenv("MQTT_TOPIC_1", "LOKI_2004")
+# MQTT topics for sensor data
+mqtt_topics = [
+    os.getenv("MQTT_TOPIC_1", "LOKI_2004"),
+    os.getenv("MQTT_TOPIC_2", "RANJ_2005"),
+    os.getenv("MQTT_TOPIC_3", "TRISH_2005"),
+    os.getenv("MQTT_TOPIC_4", "SUSH_2004/#"),
+    os.getenv("MQTT_TOPIC_5", "SAM_2006")
+]
+# Filter out None values
+mqtt_topics = [t for t in mqtt_topics if t]
 
 if not all([host, port, mqtt_username, mqtt_password]):
     logging.error("Required MQTT environment variables not set")
@@ -97,7 +105,7 @@ def parse_gas_sensor_data(payload):
 def parse_sensor_data(topic, payload):
     """Parse sensor data based on topic"""
     try:
-        if topic == mqtt_topic:
+        if topic in mqtt_topics or any(topic.startswith(t.rstrip('/#')) for t in mqtt_topics if '/#' in t):
             parse_gas_sensor_data(payload)
         else:
             logging.warning(f"Unknown topic received: {topic}")
@@ -109,8 +117,10 @@ def on_connect(client, userdata, flags, return_code):
     """MQTT connection callback"""
     if return_code == 0:
         logging.info("✅ Connected to MQTT broker")
-        logging.info(f"📡 Subscribing to topic: {mqtt_topic}")
-        client.subscribe(mqtt_topic)
+        logging.info(f"📡 Subscribing to {len(mqtt_topics)} topics:")
+        for topic in mqtt_topics:
+            logging.info(f"   🔔 {topic}")
+            client.subscribe(topic)
     else:
         logging.error(f"❌ Failed to connect to MQTT broker, return code: {return_code}")
 
@@ -152,7 +162,7 @@ def run():
         logging.info("🛡 MINE ARMOUR - GAS SENSOR DATA SERVER")
         logging.info("==================================================")
         logging.info(f"🔗 Connecting to MQTT broker: {host}:{port}")
-        logging.info(f"📡 Monitoring topic: {mqtt_topic}")
+        logging.info(f"📡 Monitoring {len(mqtt_topics)} topics: {', '.join(mqtt_topics)}")
         
         # Connect to MQTT broker
         client.connect(host, port, 60)
