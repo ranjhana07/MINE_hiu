@@ -1190,11 +1190,12 @@ class MQTTClient:
             CallbackAPIVersion = getattr(mqtt, 'CallbackAPIVersion', None)
             if CallbackAPIVersion is not None:
                 # paho-mqtt v2.x path
-                self.client = mqtt.Client(
-                    client_id='MineArmourDash',
-                    protocol=mqtt.MQTTv311,
-                    callback_api_version=CallbackAPIVersion.VERSION1
-                )
+               self.client = mqtt.Client(
+    client_id="MineArmourDash",
+    clean_session=False,
+    protocol=mqtt.MQTTv311
+)
+
             else:
                 # paho-mqtt v1.x path
                 self.client = mqtt.Client(client_id='MineArmourDash', protocol=mqtt.MQTTv311)
