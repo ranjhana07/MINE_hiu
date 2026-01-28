@@ -26,9 +26,6 @@ import dash_bootstrap_components as dbc
 import dash
 from dash.exceptions import PreventUpdate
 
-# Twilio for SMS alerts
-from twilio.rest import Client
-
 # Load environment variables
 from dotenv import load_dotenv
 load_dotenv()
@@ -38,30 +35,6 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
-
-# SMS Alert Configuration
-TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
-TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
-TWILIO_PHONE_NUMBER = os.getenv('TWILIO_PHONE_NUMBER')
-ALERT_PHONE_NUMBER = os.getenv('ALERT_PHONE_NUMBER')
-
-# Initialize Twilio client if credentials are available
-twilio_client = None
-if all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER, ALERT_PHONE_NUMBER]):
-    try:
-        twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-        logging.info("✅ Twilio SMS client initialized successfully")
-        logging.info(f"📱 Twilio FROM number: {TWILIO_PHONE_NUMBER}")
-        logging.info(f"📱 Alert TO number: {ALERT_PHONE_NUMBER}")
-    except Exception as e:
-        logging.error(f"❌ Failed to initialize Twilio client: {e}")
-else:
-    missing = []
-    if not TWILIO_ACCOUNT_SID: missing.append("TWILIO_ACCOUNT_SID")
-    if not TWILIO_AUTH_TOKEN: missing.append("TWILIO_AUTH_TOKEN") 
-    if not TWILIO_PHONE_NUMBER: missing.append("TWILIO_PHONE_NUMBER")
-    if not ALERT_PHONE_NUMBER: missing.append("ALERT_PHONE_NUMBER")
-    logging.warning(f"⚠️ Twilio credentials missing: {missing}. SMS alerts disabled.")
 
 class SensorDataManager:
     """Manages real-time multi-sensor data storage and retrieval"""
@@ -1118,53 +1091,6 @@ class SensorDataManager:
                 status.append((checkpoint, is_passed, timestamp))
             
             return status
-
-
-def send_sms_alert(alert_entry):
-    """Send SMS alert using Twilio"""
-    global twilio_client
-    
-    if not twilio_client:
-        logging.warning("⚠️ SMS alert skipped - Twilio client not initialized")
-        return False
-    
-    try:
-        # Format SMS message with alert details
-        message_body = f"""🛡 MINE ARMOUR ALERT 🛡
-
-⚠️ {alert_entry['type']}: {alert_entry['message']}
-
-👤 User: {alert_entry['user']}
-📍 Zone: {alert_entry['zone']}
-🔗 Node: {alert_entry['node']}
-🕐 Time: {alert_entry['ts'][:19]}
-
-Immediate action required!"""
-
-        logging.info(f"📤 Attempting to send SMS...")
-        logging.info(f"📱 FROM: {TWILIO_PHONE_NUMBER}")
-        logging.info(f"📱 TO: {ALERT_PHONE_NUMBER}")
-        logging.info(f"📄 Message: {alert_entry['message']}")
-
-        # Send SMS
-        message = twilio_client.messages.create(
-            body=message_body,
-            from_=TWILIO_PHONE_NUMBER,
-            to=ALERT_PHONE_NUMBER
-        )
-        
-        logging.info(f"✅ SMS alert sent successfully! Message SID: {message.sid}")
-        logging.info(f"📊 Status: {message.status}")
-        return True
-        
-    except Exception as e:
-        logging.error(f"❌ Failed to send SMS alert: {e}")
-        logging.error(f"❌ Error type: {type(e).__name__}")
-        if "not a valid phone number" in str(e):
-            logging.error(f"❌ Phone number format issue - FROM: {TWILIO_PHONE_NUMBER}, TO: {ALERT_PHONE_NUMBER}")
-        elif "not verified" in str(e):
-            logging.error(f"❌ Phone number not verified in Twilio account: {TWILIO_PHONE_NUMBER}")
-        return False
 
 
 class MQTTClient:
@@ -3515,7 +3441,7 @@ def toggle_vitals_sections(node_data, pathname):
     prevent_initial_call=True
 )
 def monitor_alerts(n, alerts_data, zone_data, node_data):
-    """Enhanced alert monitoring with SMS notifications for heart rate and gas sensor data"""
+    """Enhanced alert monitoring for heart rate and gas sensor data"""
     try:
         if alerts_data is None:
             alerts = []
@@ -3653,12 +3579,6 @@ def monitor_alerts(n, alerts_data, zone_data, node_data):
             if not is_duplicate:
                 alerts.append(alert_entry)
                 logging.info(f"🚨 New alert: {alert_entry['type']} - {alert_entry['message']} (User: {user}, Zone: {zone}, Node: {node})")
-                
-                # Send SMS for new alert
-                try:
-                    send_sms_alert(alert_entry)
-                except Exception as sms_error:
-                    logging.error(f"SMS sending failed for alert: {sms_error}")
 
         # Log current monitoring status
         temp_display = f"{temperature}°C" if temperature is not None else "N/A"

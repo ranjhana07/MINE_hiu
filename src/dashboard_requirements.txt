@@ -3,5 +3,4 @@ dash-bootstrap-components
 plotly
 paho-mqtt
 python-dotenv
-twilio
 requests
