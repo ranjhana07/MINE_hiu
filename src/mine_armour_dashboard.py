@@ -3788,13 +3788,12 @@ if __name__ == '__main__':
         # Run the dashboard (disable dev tools UI/hot-reload in production to remove debug overlay)
         port = int(os.environ.get("PORT", 8050))
 
-        app.run_server(
-            debug=False,
-            dev_tools_ui=False,
-            dev_tools_hot_reload=False,
-            host='0.0.0.0',
-            port=port
-        )
+        app.run(
+    debug=False,
+    host="0.0.0.0",
+    port=int(os.environ.get("PORT", 10000))
+)
+
 
     except KeyboardInterrupt:
         print("\n🛑 Shutting down Mine Armour Dashboard...")
