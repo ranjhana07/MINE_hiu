@@ -1185,41 +1185,31 @@ class MQTTClient:
         logging.info("Disconnected from MQTT broker")
     
     def connect(self):
-        try:
-            # Create MQTT client compatible with paho v1.x and v2.x, force MQTT 3.1.1
-            CallbackAPIVersion = getattr(mqtt, 'CallbackAPIVersion', None)
-            if CallbackAPIVersion is not None:
-                # paho-mqtt v2.x path
-               self.client = mqtt.Client(
-    client_id="MineArmourDash",
-    clean_session=False,
-    protocol=mqtt.MQTTv311
-)
+       try:
+        from paho.mqtt.client import CallbackAPIVersion
 
-            else:
-                # paho-mqtt v1.x path
-                self.client = mqtt.Client(client_id='MineArmourDash', protocol=mqtt.MQTTv311)
-            self.client.on_connect = self.on_connect
-            self.client.on_message = self.on_message
-            self.client.on_disconnect = self.on_disconnect
-            
-            if self.mqtt_username and self.mqtt_password:
-                self.client.username_pw_set(self.mqtt_username, self.mqtt_password)
-            
-            # Enable TLS for secure connection  
-            import ssl
-            context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-            self.client.tls_set_context(context)
-            
-            self.client.connect(self.mqtt_host, self.mqtt_port, 60)
-            self.client.loop_start()
-            
-            logging.info(f"Connecting to MQTT broker at {self.mqtt_host}:{self.mqtt_port}")
-            
-        except Exception as e:
-            logging.error(f"Error connecting to MQTT: {e}")
+        self.client = mqtt.Client(
+            client_id="MineArmourDash",
+            protocol=mqtt.MQTTv311,
+            callback_api_version=CallbackAPIVersion.VERSION1
+        )
+
+        self.client.on_connect = self.on_connect
+        self.client.on_message = self.on_message
+        self.client.on_disconnect = self.on_disconnect
+
+        self.client.reconnect_delay_set(min_delay=5, max_delay=30)
+        self.client.enable_logger()
+
+        if self.mqtt_username and self.mqtt_password:
+            self.client.username_pw_set(self.mqtt_username, self.mqtt_password)
+
+        self.client.tls_set_context(self.ssl_context)
+        self.client.connect(self.mqtt_host, self.mqtt_port, keepalive=60)
+        self.client.loop_start()
+
+    except Exception as e:
+        logging.error(f"Error connecting to MQTT: {e}")
     
     def disconnect(self):
         """Properly disconnect from MQTT broker"""
