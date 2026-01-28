@@ -48,20 +48,6 @@ class SensorDataManager:
         'SAM_2006': ['C7761005', '7AA81505'],   # SAM → Lokesh & Ranjana
     }
     
-    @staticmethod
-    def get_node_ids_for_topic(topic):
-        """Get node IDs for a given topic, handling wildcards"""
-        # Direct match
-        if topic in SensorDataManager.TOPIC_TO_NODE_MAP:
-            return SensorDataManager.TOPIC_TO_NODE_MAP[topic]
-        
-        # Handle wildcard topics like SUSH_2004/sensors → SUSH_2004
-        for base_topic, node_ids in SensorDataManager.TOPIC_TO_NODE_MAP.items():
-            if topic.startswith(base_topic + '/'):
-                return node_ids
-        
-        return []
-    
 
 
 
@@ -748,12 +734,8 @@ class SensorDataManager:
             # If topic is provided, map it to node_id(s)
             node_ids = []
             if topic and not node_id:
-                node_ids = self.get_node_ids_for_topic(topic)
-                logging.info(f"🗺️ Topic '{topic}' mapped to nodes: {node_ids}")
-                # CRITICAL: Only add data to mapped nodes, skip if no mapping found
-                if not node_ids:
-                    logging.warning(f"⚠️ No node mapping for topic '{topic}' - data ignored")
-                    return
+                mapped = self.TOPIC_TO_NODE_MAP.get(topic, [])
+                node_ids = mapped if isinstance(mapped, list) else [mapped]
             elif node_id:
                 node_ids = [node_id]
             
@@ -841,8 +823,8 @@ class SensorDataManager:
                     'lat': lat, 'lon': lon, 'alt': alt, 'sat': sat
                 }
             
-            # REMOVED: Global data update to prevent data contamination across nodes
-            # Only update per-node data to maintain strict topic-to-node isolation
+            # Add to global data (for backward compatibility)
+            _append_to_data_dict(self.data)
             
             # Add to per-node data for all mapped nodes
             for nid in node_ids:
