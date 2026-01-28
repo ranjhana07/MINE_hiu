@@ -48,6 +48,20 @@ class SensorDataManager:
         'SAM_2006': ['C7761005', '7AA81505'],   # SAM → Lokesh & Ranjana
     }
     
+    @staticmethod
+    def get_node_ids_for_topic(topic):
+        """Get node IDs for a given topic, handling wildcards"""
+        # Direct match
+        if topic in SensorDataManager.TOPIC_TO_NODE_MAP:
+            return SensorDataManager.TOPIC_TO_NODE_MAP[topic]
+        
+        # Handle wildcard topics like SUSH_2004/sensors → SUSH_2004
+        for base_topic, node_ids in SensorDataManager.TOPIC_TO_NODE_MAP.items():
+            if topic.startswith(base_topic + '/'):
+                return node_ids
+        
+        return []
+    
 
 
 
@@ -734,8 +748,12 @@ class SensorDataManager:
             # If topic is provided, map it to node_id(s)
             node_ids = []
             if topic and not node_id:
-                mapped = self.TOPIC_TO_NODE_MAP.get(topic, [])
-                node_ids = mapped if isinstance(mapped, list) else [mapped]
+                node_ids = self.get_node_ids_for_topic(topic)
+                logging.info(f"🗺️ Topic '{topic}' mapped to nodes: {node_ids}")
+                # CRITICAL: Only add data to mapped nodes, skip if no mapping found
+                if not node_ids:
+                    logging.warning(f"⚠️ No node mapping for topic '{topic}' - data ignored")
+                    return
             elif node_id:
                 node_ids = [node_id]
             
@@ -823,8 +841,8 @@ class SensorDataManager:
                     'lat': lat, 'lon': lon, 'alt': alt, 'sat': sat
                 }
             
-            # Add to global data (for backward compatibility)
-            _append_to_data_dict(self.data)
+            # REMOVED: Global data update to prevent data contamination across nodes
+            # Only update per-node data to maintain strict topic-to-node isolation
             
             # Add to per-node data for all mapped nodes
             for nid in node_ids:
@@ -1094,102 +1112,80 @@ class SensorDataManager:
 
 
 class MQTTClient:
-    """MQTT client for receiving gas sensor data"""
-    
+    """MQTT client for receiving sensor & RFID data"""
+
     def __init__(self, data_manager):
         self.data_manager = data_manager
         self.client = None
         self.connected = False
-        
-        # MQTT Configuration from environment
+
+        # MQTT Configuration
         self.mqtt_host = os.getenv("MQTT_HOST", "t5066166.ala.asia-southeast1.emqxsl.com")
         self.mqtt_port = int(os.getenv("MQTT_PORT", 8883))
-        self.mqtt_username = os.getenv("MQTT_USERNAME")
-        self.mqtt_password = os.getenv("MQTT_PASSWORD")
-        
-        # MQTT Topics - Subscribe to ALL topics from TOPIC_TO_NODE_MAP
-        # This ensures all sensor data from all topics is received
+        self.mqtt_username = os.getenv("MQTT_USERNAME", "LOKI")
+        self.mqtt_password = os.getenv("MQTT_PASSWORD", "LOKI2004")
+
+        # Topics
         self.subscribe_topics = list(SensorDataManager.TOPIC_TO_NODE_MAP.keys())
-        
-        logging.info(f"Configured to subscribe to topics: {self.subscribe_topics}")
-        
-        # RFID topic for checkpoint tracking
         self.rfid_topic = "rfid"
-        
-        # Control whether RFID-like payloads on the gas topic should be treated as RFID
-        # Default OFF to ensure only explicit RFID topic affects checkpoints
-        self.allow_rfid_on_gas = os.getenv("ALLOW_RFID_ON_GAS", "false").lower() != 'false'
-        # Allow-list of RFID tag_ids that are permitted to affect checkpoints
-        # Comma-separated env list; defaults to the four primary nodes
-        tags_env = os.getenv("ALLOWED_RFID_TAGS", "C7761005,93BA302D,7AA81505,DB970104")
-        self.allowed_rfid_tags = set(t.strip() for t in tags_env.split(',') if t.strip())
-    
+
+        logging.info(f"MQTT subscribing to topics: {self.subscribe_topics}")
+
+    # --------------------------------------------------
+    # MQTT CALLBACKS
+    # --------------------------------------------------
+
     def on_connect(self, client, userdata, flags, rc):
         if rc == 0:
             self.connected = True
-            logging.info("Connected to MQTT broker")
-            # Subscribe to gas/sensor topics (primary source + aliases)
-            for t in self.subscribe_topics:
-                try:
-                    client.subscribe(t)
-                    logging.info(f"Subscribed to topic: {t}")
-                except Exception as e:
-                    logging.error(f"Failed subscribing to {t}: {e}")
-            # Subscribe to RFID topics to receive checkpoint scans
+            logging.info("✅ Connected to MQTT broker")
+
+            for topic in self.subscribe_topics:
+                client.subscribe(topic)
+                logging.info(f"📡 Subscribed to {topic}")
+
             client.subscribe("rfid")
             client.subscribe("rfid/#")
-            logging.info("Subscribed to RFID topics: rfid and rfid/#")
+            logging.info("📡 Subscribed to RFID topics")
+
         else:
-            logging.error(f"Failed to connect to MQTT broker: {rc}")
-    
+            logging.error(f"❌ MQTT connection failed (rc={rc})")
+
     def on_message(self, client, userdata, message):
         try:
+            payload = message.payload.decode()
             topic = message.topic
-            payload = message.payload.decode('utf-8')
-            logging.info(f"MQTT message on '{topic}': {payload}")
+            logging.info(f"📩 MQTT [{topic}] {payload}")
 
-            # Attempt to parse JSON payload
-            data = None
             try:
                 data = json.loads(payload)
-                logging.debug(f"Parsed JSON: keys={list(data.keys()) if isinstance(data, dict) else type(data)}")
             except Exception:
-                logging.debug(f"Non-JSON payload on {topic}: {payload}")
+                logging.warning("⚠ Non-JSON payload ignored")
+                return
 
-            # Check if this looks like RFID data (has both tag_id and station_id)
-            is_rfid_like = (isinstance(data, dict) and 'tag_id' in data and 'station_id' in data)
-            
-            if is_rfid_like:
-                logging.info(f"RFID-like data detected on topic '{topic}': tag_id={data.get('tag_id')}, station_id={data.get('station_id')}")
-                # Process as RFID regardless of topic (for now, to fix the issue)
+            # RFID payload
+            if isinstance(data, dict) and "tag_id" in data and "station_id" in data:
                 self.data_manager.add_rfid_data(data)
-                logging.info(f"Processed as RFID: {data}")
-            elif isinstance(data, dict):
-                # Regular sensor data - pass topic for node mapping
-                self.data_manager.add_gas_data(data, topic=topic)
-                latest = self.data_manager.get_gas_data().get('latest', {})
-                logging.info(
-                    "Updated sensors | LPG=%s CH4=%s Propane=%s Butane=%s H2=%s HR=%s SpO2=%s Temp=%s Hum=%s",
-                    latest.get('LPG'), latest.get('CH4'), latest.get('Propane'), latest.get('Butane'), latest.get('H2'),
-                    latest.get('heartRate'), latest.get('spo2'), latest.get('temperature'), latest.get('humidity')
-                )
             else:
-                logging.debug(f"Unhandled message on {topic}: {payload}")
+                self.data_manager.add_gas_data(data, topic=topic)
 
         except Exception as e:
-            logging.error(f"Error processing message: {e}")
+            logging.error(f"❌ MQTT message error: {e}")
 
-    
     def on_disconnect(self, client, userdata, rc):
         self.connected = False
-        logging.info("Disconnected from MQTT broker")
-    
+        logging.warning("🔌 MQTT disconnected")
+
+    # --------------------------------------------------
+    # CONNECT / DISCONNECT
+    # --------------------------------------------------
+
     def connect(self):
         try:
             from paho.mqtt.client import CallbackAPIVersion
 
             self.client = mqtt.Client(
-                client_id="MineArmourDash",
+                client_id="MineArmourDashboard",
                 protocol=mqtt.MQTTv311,
                 callback_api_version=CallbackAPIVersion.VERSION1
             )
@@ -1198,28 +1194,28 @@ class MQTTClient:
             self.client.on_message = self.on_message
             self.client.on_disconnect = self.on_disconnect
 
-            self.client.reconnect_delay_set(min_delay=5, max_delay=30)
+            # Authentication
+            self.client.username_pw_set(self.mqtt_username, self.mqtt_password)
+
+            # ✅ CORRECT TLS CONFIG (NO ssl_context ATTRIBUTE)
+            self.client.tls_set(
+                tls_version=ssl.PROTOCOL_TLSv1_2
+            )
+
+            self.client.reconnect_delay_set(5, 30)
             self.client.enable_logger()
 
-            if self.mqtt_username and self.mqtt_password:
-                self.client.username_pw_set(self.mqtt_username, self.mqtt_password)
-
-            self.client.tls_set_context(self.ssl_context)
-            self.client.connect(self.mqtt_host, self.mqtt_port, keepalive=60)
+            self.client.connect(self.mqtt_host, self.mqtt_port, 60)
             self.client.loop_start()
 
         except Exception as e:
-            logging.error(f"Error connecting to MQTT: {e}")
-    
+            logging.error(f"❌ Error connecting to MQTT: {e}")
+
     def disconnect(self):
-        """Properly disconnect from MQTT broker"""
         if self.client:
-            try:
-                self.client.loop_stop()
-                self.client.disconnect()
-                logging.info("MQTT client disconnected properly")
-            except Exception as e:
-                logging.error(f"Error disconnecting MQTT: {e}")
+            self.client.loop_stop()
+            self.client.disconnect()
+            logging.info("🔴 MQTT disconnected cleanly")
 
 # Initialize data manager and MQTT client
 data_manager = SensorDataManager()
@@ -3780,10 +3776,10 @@ if __name__ == '__main__':
         port = int(os.environ.get("PORT", 8050))
 
         app.run(
-    debug=False,
-    host="0.0.0.0",
-    port=int(os.environ.get("PORT", 10000))
-)
+            debug=False,
+            host="0.0.0.0",
+            port=port
+        )
 
 
     except KeyboardInterrupt:
