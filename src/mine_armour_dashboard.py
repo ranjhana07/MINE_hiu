@@ -39,13 +39,13 @@ logging.basicConfig(
 class SensorDataManager:
     """Manages real-time multi-sensor data storage and retrieval"""
     
-    # Topic to Node ID mapping - maps MQTT topics to lists of node IDs
+    # Topic to Node ID mapping - Each topic maps to ONE specific node only
     TOPIC_TO_NODE_MAP = {
-        'LOKI_2004': ['93BA302D', 'DB970104'],  # LOKI → Trishala & Sushma
-        'RANJ_2005': ['C7761005', '7AA81505'],  # RANJ → Lokesh & Ranjana
-        'TRISH_2005': ['C7761005', '7AA81505'], # TRISH → Lokesh & Ranjana
-        'SUSH_2004': ['C7761005', '7AA81505'],  # SUSH → Lokesh & Ranjana
-        'SAM_2006': ['C7761005', '7AA81505'],   # SAM → Lokesh & Ranjana
+        'LOKI_2004': ['93BA302D'],    # LOKI → ONLY Trishala (93BA302D)
+        'RANJ_2005': ['C7761005'],    # RANJ → ONLY Lokesh (C7761005)
+        'TRISH_2005': ['7AA81505'],   # TRISH → ONLY Ranjhana (7AA81505)
+        'SUSH_2004': ['DB970104'],    # SUSH → ONLY Sushma (DB970104)
+        'SAM_2006': ['DB970104'],     # SAM → ONLY Sushma (DB970104)
     }
     
 
@@ -739,6 +739,13 @@ class SensorDataManager:
             elif node_id:
                 node_ids = [node_id]
             
+            # Validate that we have valid node_ids from topic mapping
+            if not node_ids:
+                logging.info(f"⛔ Sensor data BLOCKED - No valid node mapping for topic {topic}")
+                return  # Exit early if no valid nodes
+            
+            logging.info(f"✅ Sensor data processing for nodes: {node_ids} from topic {topic}")
+            
             # Safe numeric casting helpers (handle strings from publishers)
             def _to_float(v, default=0.0):
                 try:
@@ -823,7 +830,7 @@ class SensorDataManager:
                     'lat': lat, 'lon': lon, 'alt': alt, 'sat': sat
                 }
             
-            # Add to global data (for backward compatibility)
+            # Add to global data (for backward compatibility with TRISHALA node)
             _append_to_data_dict(self.data)
             
             # Add to per-node data for all mapped nodes
@@ -854,7 +861,7 @@ class SensorDataManager:
         with self.lock:
             if node_id in self.per_node_data:
                 return self.per_node_data[node_id]['gas_sensors'].copy()
-            return self.data['gas_sensors'].copy()  # Fallback to global data
+            return self._create_empty_node_data()['gas_sensors'].copy()  # Return empty if node not found
     
     def get_health_data(self):
         """Get health sensor data for plotting"""
@@ -866,7 +873,7 @@ class SensorDataManager:
         with self.lock:
             if node_id in self.per_node_data:
                 return self.per_node_data[node_id]['health_sensors'].copy()
-            return self.data['health_sensors'].copy()
+            return self._create_empty_node_data()['health_sensors'].copy()  # Return empty if node not found
     
     def get_environmental_data(self):
         """Get environmental sensor data for plotting"""
@@ -878,7 +885,7 @@ class SensorDataManager:
         with self.lock:
             if node_id in self.per_node_data:
                 return self.per_node_data[node_id]['environmental_sensors'].copy()
-            return self.data['environmental_sensors'].copy()
+            return self._create_empty_node_data()['environmental_sensors'].copy()  # Return empty if node not found
     
     def get_gps_data(self):
         """Get GPS data for mapping"""
@@ -890,7 +897,7 @@ class SensorDataManager:
         with self.lock:
             if node_id in self.per_node_data:
                 return self.per_node_data[node_id]['gps_data'].copy()
-            return self.data['gps_data'].copy()
+            return self._create_empty_node_data()['gps_data'].copy()  # Return empty if node not found
     
     def add_rfid_data(self, rfid_data):
         """Add new RFID checkpoint data"""
@@ -901,6 +908,12 @@ class SensorDataManager:
             station_id = rfid_data.get('station_id', '')
             tag_id = rfid_data.get('tag_id', '')
             logging.info(f"Processing RFID data: tag_id={tag_id}, station_id={station_id}")
+            
+            # FILTER: Tag 0AC909B0 from station A1 must ONLY show on TRISHALA node (93BA302D)
+            if tag_id == '0AC909B0' and station_id == 'A1':
+                # Only allow this tag to process on TRISHALA node
+                logging.info(f"Restricted tag {tag_id} from {station_id} detected - will only display on TRISHALA node (93BA302D)")
+                # We'll filter it to only assign to TRISHALA node later
             
             try:
                 tag_lc = tag_id.lower() if isinstance(tag_id, str) else ''
@@ -947,6 +960,16 @@ class SensorDataManager:
                 node_id = nodes[node_idx]
             else:
                 node_id = station_id  # Fallback to station_id if no mapping
+            
+            # FILTER OVERRIDE: Tag 0AC909B0 from station A1 must ONLY show on TRISHALA node
+            if tag_id == '0AC909B0' and station_id == 'A1':
+                node_id = '93BA302D'  # Force to TRISHALA node only
+                logging.info(f"Tag {tag_id} from {station_id} filtered to TRISHALA node (93BA302D)")
+            
+            # ENFORCE RESTRICTION: Reject this tag from any other node
+            if tag_id == '0AC909B0' and station_id == 'A1' and node_id != '93BA302D':
+                logging.warning(f"BLOCKED: Tag {tag_id} from {station_id} attempted to display on node {node_id} - ONLY TRISHALA (93BA302D) allowed")
+                return
             
             # Map station to checkpoint names
             checkpoint_mapping = {
@@ -2379,8 +2402,10 @@ def update_current_values(n, node_data):
         # Connection status
         status = "Connected" if mqtt_client.connected else "Disconnected"
         
-        # Get node ID if available
-        node_id = node_data.get('node_id') if node_data else None
+        # Get node ID if available - check both 'node_id' and 'node' keys
+        node_id = None
+        if node_data:
+            node_id = node_data.get('node_id') or node_data.get('node')
         logging.info(f"🔍 Extracted node_id: {node_id}")
         
         # Get latest gas sensor values (node-specific if node is selected)
@@ -3590,7 +3615,9 @@ def render_alerts(alerts_data, clear_clicks):
 
         # Build list of alert rows (most recent first)
         rows = []
-        for a in reversed(list(alerts_data))[-10:]:
+        # Convert to list first to avoid iterator issues
+        alerts_list = list(alerts_data)
+        for a in list(reversed(alerts_list))[:10]:  # Get last 10, most recent first
             ts = a.get('ts')
             try:
                 ts_fmt = datetime.fromisoformat(ts).strftime('%H:%M:%S')
