@@ -19,12 +19,16 @@ import logging
 import paho.mqtt.client as mqtt
 import plotly.graph_objects as go
 import plotly.express as px
+import plotly.io as pio
 import dash
 from dash import dcc, html, Input, Output, State, ALL, callback_context
 from flask import request, jsonify
 import dash_bootstrap_components as dbc
 import dash
 from dash.exceptions import PreventUpdate
+
+# Force Plotly to use built-in json engine to avoid orjson issues
+pio.json.config.default_engine = "json"
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -919,6 +923,16 @@ class SensorDataManager:
                 tag_lc = tag_id.lower() if isinstance(tag_id, str) else ''
             except Exception:
                 tag_lc = ''
+
+            # SPECIAL CASE: If tag 93BA302D arrives with name LOKESH, treat it as Lokesh node (C7761005)
+            # and do NOT update any other node's checkpoint status.
+            try:
+                rfid_name = rfid_data.get('name') if isinstance(rfid_data, dict) else None
+            except Exception:
+                rfid_name = None
+            if tag_lc == '93ba302d' and isinstance(rfid_name, str) and rfid_name.strip().upper() == 'LOKESH':
+                logging.info("RFID tag 93BA302D labeled LOKESH detected - mapping to Lokesh node (C7761005) only")
+                tag_lc = 'c7761005'
             
             # TEMPORARILY DISABLE DEBOUNCING TO DEBUG
             # # DEBOUNCING: Ignore duplicate scans within 3 seconds
